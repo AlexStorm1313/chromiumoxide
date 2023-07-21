@@ -67658,6 +67658,10 @@ pub mod browser_protocol {
             #[serde(rename = "captureBeyondViewport")]
             #[serde(skip_serializing_if = "Option::is_none")]
             pub capture_beyond_viewport: Option<bool>,
+            #[doc = "Optimize image encoding for speed, not for resulting size (defaults to false)"]
+            #[serde(rename = "optimizeForSpeed")]
+            #[serde(skip_serializing_if = "Option::is_none")]
+            pub optimize_for_speed: Option<bool>,
         }
         #[doc = "Image compression format (defaults to png)."]
         #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -67701,6 +67705,7 @@ pub mod browser_protocol {
             clip: Option<Viewport>,
             from_surface: Option<bool>,
             capture_beyond_viewport: Option<bool>,
+            optimize_for_speed: Option<bool>,
         }
         impl CaptureScreenshotParamsBuilder {
             pub fn format(mut self, format: impl Into<CaptureScreenshotFormat>) -> Self {
@@ -67726,6 +67731,10 @@ pub mod browser_protocol {
                 self.capture_beyond_viewport = Some(capture_beyond_viewport.into());
                 self
             }
+            pub fn optimize_for_speed(mut self, optimize_for_speed: impl Into<bool>) -> Self {
+                self.optimize_for_speed = Some(optimize_for_speed.into());
+                self
+            }
             pub fn build(self) -> CaptureScreenshotParams {
                 CaptureScreenshotParams {
                     format: self.format,
@@ -67733,6 +67742,7 @@ pub mod browser_protocol {
                     clip: self.clip,
                     from_surface: self.from_surface,
                     capture_beyond_viewport: self.capture_beyond_viewport,
+                    optimize_for_speed: self.optimize_for_speed,
                 }
             }
         }
