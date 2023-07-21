@@ -366,8 +366,6 @@ impl PageInner {
         let omit_background = params.omit_background();
         let device_scaling_factor = params.device_scaling_factor();
 
-        println!("{:?}", device_scaling_factor);
-
         let metrics = self.layout_metrics().await?;
         let original_device_metrics = SetDeviceMetricsOverrideParams::new(
             metrics.css_visual_viewport.client_width as i64,
