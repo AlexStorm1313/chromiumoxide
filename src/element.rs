@@ -21,6 +21,7 @@ use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 use crate::error::{CdpError, Result};
 use crate::handler::PageInner;
 use crate::layout::{BoundingBox, BoxModel, ElementQuad, Point};
+use crate::page::{ScreenshotParams, ScreenshotParamsBuilder};
 use crate::utils;
 
 /// Represents a [DOM Element](https://developer.mozilla.org/en-US/docs/Web/API/Element).
@@ -412,7 +413,11 @@ impl Element {
     }
 
     /// Scrolls the element into and takes a screenshot of it
-    pub async fn screenshot(&self, format: CaptureScreenshotFormat) -> Result<Vec<u8>> {
+    pub async fn screenshot(
+        &self,
+        format: CaptureScreenshotFormat,
+        device_scaling_factor: Option<f64>,
+    ) -> Result<Vec<u8>> {
         let mut bounding_box = self.scroll_into_view().await?.bounding_box().await?;
         let viewport = self.tab.layout_metrics().await?.css_layout_viewport;
 
@@ -429,9 +434,10 @@ impl Element {
 
         self.tab
             .screenshot(
-                CaptureScreenshotParams::builder()
+                ScreenshotParams::builder()
                     .format(format)
                     .clip(clip)
+                    .device_scale_factor(device_scaling_factor.unwrap_or_default())
                     .build(),
             )
             .await
@@ -441,9 +447,10 @@ impl Element {
     pub async fn save_screenshot(
         &self,
         format: CaptureScreenshotFormat,
+        device_scale_factor: Option<f64>,
         output: impl AsRef<Path>,
     ) -> Result<Vec<u8>> {
-        let img = self.screenshot(format).await?;
+        let img = self.screenshot(format, device_scale_factor).await?;
         utils::write(output.as_ref(), &img).await?;
         Ok(img)
     }

@@ -1013,6 +1013,8 @@ pub struct ScreenshotParams {
     pub full_page: Option<bool>,
     /// Make the background transparent (png only).
     pub omit_background: Option<bool>,
+    /// Set device scaling factor
+    pub device_scaling_factor: Option<f64>,
 }
 
 impl ScreenshotParams {
@@ -1032,6 +1034,10 @@ impl ScreenshotParams {
                 .as_ref()
                 .map_or(true, |f| f == &CaptureScreenshotFormat::Png)
     }
+
+    pub(crate) fn device_scaling_factor(&self) -> f64 {
+        self.device_scaling_factor.unwrap_or(1.)
+    }
 }
 
 /// Page screenshot parameters builder with extra options.
@@ -1040,6 +1046,7 @@ pub struct ScreenshotParamsBuilder {
     cdp_params: CaptureScreenshotParams,
     full_page: Option<bool>,
     omit_background: Option<bool>,
+    device_scaling_factor: Option<f64>,
 }
 
 impl ScreenshotParamsBuilder {
@@ -1079,11 +1086,18 @@ impl ScreenshotParamsBuilder {
         self
     }
 
+    /// Set device scaling factor
+    pub fn device_scale_factor(mut self, device_sclaing_factor: impl Into<f64>) -> Self {
+        self.device_scaling_factor = Some(device_sclaing_factor.into());
+        self
+    }
+
     pub fn build(self) -> ScreenshotParams {
         ScreenshotParams {
             cdp_params: self.cdp_params,
             full_page: self.full_page,
             omit_background: self.omit_background,
+            device_scaling_factor: self.device_scaling_factor,
         }
     }
 }

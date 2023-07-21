@@ -360,29 +360,27 @@ impl PageInner {
 
     pub async fn screenshot(&self, params: impl Into<ScreenshotParams>) -> Result<Vec<u8>> {
         self.activate().await?;
-        let params = params.into();
+
+        let params: ScreenshotParams = params.into();
         let full_page = params.full_page();
         let omit_background = params.omit_background();
+        let device_scaling_factor = params.device_scaling_factor();
 
-        let mut cdp_params = params.cdp_params;
+        println!("{:?}", device_scaling_factor);
+
+        let metrics = self.layout_metrics().await?;
+        let original_device_metrics = SetDeviceMetricsOverrideParams::new(
+            metrics.css_visual_viewport.client_width as i64,
+            metrics.css_visual_viewport.client_height as i64,
+            device_scaling_factor,
+            false,
+        );
 
         if full_page {
-            let metrics = self.layout_metrics().await?;
-            let width = metrics.css_content_size.width;
-            let height = metrics.css_content_size.height;
-
-            cdp_params.clip = Some(Viewport {
-                x: 0.,
-                y: 0.,
-                width,
-                height,
-                scale: 1.,
-            });
-
             self.execute(SetDeviceMetricsOverrideParams::new(
-                width as i64,
-                height as i64,
-                1.,
+                metrics.css_content_size.width as i64,
+                metrics.css_content_size.height as i64,
+                device_scaling_factor,
                 false,
             ))
             .await?;
@@ -400,7 +398,11 @@ impl PageInner {
             .await?;
         }
 
-        let res = self.execute(cdp_params).await?.result;
+        if (device_scaling_factor != 1.) {
+            self.execute(original_device_metrics.clone()).await?;
+        }
+
+        let res = self.execute(params.cdp_params).await?.result;
 
         if omit_background {
             self.execute(SetDefaultBackgroundColorOverrideParams { color: None })
@@ -408,7 +410,7 @@ impl PageInner {
         }
 
         if full_page {
-            self.execute(ClearDeviceMetricsOverrideParams {}).await?;
+            self.execute(original_device_metrics).await?;
         }
 
         Ok(utils::base64::decode(&res.data)?)
