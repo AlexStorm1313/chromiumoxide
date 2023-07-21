@@ -413,44 +413,32 @@ impl Element {
     }
 
     /// Scrolls the element into and takes a screenshot of it
-    pub async fn screenshot(
-        &self,
-        format: CaptureScreenshotFormat,
-        device_scaling_factor: Option<f64>,
-    ) -> Result<Vec<u8>> {
+    pub async fn screenshot(&self, params: impl Into<ScreenshotParams>) -> Result<Vec<u8>> {
         let mut bounding_box = self.scroll_into_view().await?.bounding_box().await?;
         let viewport = self.tab.layout_metrics().await?.css_layout_viewport;
 
         bounding_box.x += viewport.page_x as f64;
         bounding_box.y += viewport.page_y as f64;
 
-        let clip = Viewport {
+        let mut params: ScreenshotParams = params.into();
+        params.cdp_params.clip = Some(Viewport {
             x: viewport.page_x as f64 + bounding_box.x,
             y: viewport.page_y as f64 + bounding_box.y,
             width: bounding_box.width,
             height: bounding_box.height,
             scale: 1.,
-        };
+        });
 
-        self.tab
-            .screenshot(
-                ScreenshotParams::builder()
-                    .format(format)
-                    .clip(clip)
-                    .device_scale_factor(device_scaling_factor.unwrap_or_default())
-                    .build(),
-            )
-            .await
+        self.tab.screenshot(params).await
     }
 
     /// Save a screenshot of the element and write it to `output`
     pub async fn save_screenshot(
         &self,
-        format: CaptureScreenshotFormat,
-        device_scale_factor: Option<f64>,
+        params: impl Into<ScreenshotParams>,
         output: impl AsRef<Path>,
     ) -> Result<Vec<u8>> {
-        let img = self.screenshot(format, device_scale_factor).await?;
+        let img = self.screenshot(params).await?;
         utils::write(output.as_ref(), &img).await?;
         Ok(img)
     }

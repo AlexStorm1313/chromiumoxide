@@ -398,7 +398,7 @@ impl PageInner {
             .await?;
         }
 
-        if (device_scaling_factor != 1.) {
+        if device_scaling_factor != 1. {
             self.execute(original_device_metrics.clone()).await?;
         }
 
