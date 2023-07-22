@@ -14,7 +14,7 @@ pub mod cdp;
 pub mod revision;
 
 /// Currently built CDP revision
-pub const CURRENT_REVISION: Revision = Revision(1045489);
+pub const CURRENT_REVISION: Revision = Revision(1173815);
 
 /// convenience fixups
 impl Default for CreateTargetParams {
