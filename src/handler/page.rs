@@ -11,15 +11,16 @@ use chromiumoxide_cdp::cdp::browser_protocol::dom::{
     QuerySelectorAllParams, QuerySelectorParams, Rgba,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
-    ClearDeviceMetricsOverrideParams, SetDefaultBackgroundColorOverrideParams,
-    SetDeviceMetricsOverrideParams,
+    ClearDeviceMetricsOverrideParams, ClearDeviceMetricsOverrideReturns,
+    SetDefaultBackgroundColorOverrideParams, SetDefaultBackgroundColorOverrideReturns,
+    SetDeviceMetricsOverrideParams, SetDeviceMetricsOverrideReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::input::{
     DispatchKeyEventParams, DispatchKeyEventType, DispatchMouseEventParams, DispatchMouseEventType,
     MouseButton,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::{
-    GetLayoutMetricsParams, GetLayoutMetricsReturns, Viewport,
+    CaptureScreenshotParams, GetLayoutMetricsParams, GetLayoutMetricsReturns, Viewport,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::target::{ActivateTargetParams, SessionId, TargetId};
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
@@ -36,7 +37,6 @@ use crate::handler::target::{GetExecutionContext, TargetMessage};
 use crate::handler::target_message_future::TargetMessageFuture;
 use crate::js::EvaluationResult;
 use crate::layout::Point;
-use crate::page::ScreenshotParams;
 use crate::{keys, utils, ArcHttpRequest};
 
 #[derive(Debug)]
@@ -358,60 +358,41 @@ impl PageInner {
             .result)
     }
 
-    pub async fn screenshot(&self, params: impl Into<ScreenshotParams>) -> Result<Vec<u8>> {
-        self.activate().await?;
-        let params = params.into();
-        let full_page = params.full_page();
-        let omit_background = params.omit_background();
+    /// Screenshot function for CaptureScreenshot command
+    pub async fn screenshot(
+        &self,
+        capture_screenshot_params: CaptureScreenshotParams,
+    ) -> Result<Vec<u8>> {
+        Ok(utils::base64::decode(
+            &self.execute(capture_screenshot_params).await?.result.data,
+        )?)
+    }
 
-        let mut cdp_params = params.cdp_params;
+    /// Overrides the background color of the page, usefull when taking screenshots
+    pub async fn set_background_color(
+        &self,
+        color: Option<Rgba>,
+    ) -> Result<SetDefaultBackgroundColorOverrideReturns> {
+        Ok(self
+            .execute(SetDefaultBackgroundColorOverrideParams { color })
+            .await?
+            .result)
+    }
 
-        if full_page {
-            let metrics = self.layout_metrics().await?;
-            let width = metrics.css_content_size.width;
-            let height = metrics.css_content_size.height;
+    /// Overrides the current device emultation
+    pub async fn set_device_metrics(
+        &self,
+        device_metrics: impl Into<SetDeviceMetricsOverrideParams>,
+    ) -> Result<SetDeviceMetricsOverrideReturns> {
+        Ok(self.execute(device_metrics.into()).await?.result)
+    }
 
-            cdp_params.clip = Some(Viewport {
-                x: 0.,
-                y: 0.,
-                width,
-                height,
-                scale: 1.,
-            });
-
-            self.execute(SetDeviceMetricsOverrideParams::new(
-                width as i64,
-                height as i64,
-                1.,
-                false,
-            ))
-            .await?;
-        }
-
-        if omit_background {
-            self.execute(SetDefaultBackgroundColorOverrideParams {
-                color: Some(Rgba {
-                    r: 0,
-                    g: 0,
-                    b: 0,
-                    a: Some(0.),
-                }),
-            })
-            .await?;
-        }
-
-        let res = self.execute(cdp_params).await?.result;
-
-        if omit_background {
-            self.execute(SetDefaultBackgroundColorOverrideParams { color: None })
-                .await?;
-        }
-
-        if full_page {
-            self.execute(ClearDeviceMetricsOverrideParams {}).await?;
-        }
-
-        Ok(utils::base64::decode(&res.data)?)
+    /// Clears the current device emultation back to default
+    pub async fn clear_device_metrics(&self) -> Result<ClearDeviceMetricsOverrideReturns> {
+        Ok(self
+            .execute(ClearDeviceMetricsOverrideParams {})
+            .await?
+            .result)
     }
 }
 
