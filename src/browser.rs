@@ -489,7 +489,10 @@ pub struct BrowserConfig {
 
     /// Ignore https errors, default is true
     ignore_https_errors: bool,
-    viewport: Option<Viewport>,
+
+    /// Viewport config the browser
+    pub viewport: Option<Viewport>,
+
     /// The duration after a request with no response should time out
     request_timeout: Duration,
 
