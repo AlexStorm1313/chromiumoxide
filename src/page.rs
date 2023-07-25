@@ -241,12 +241,8 @@ impl Page {
     }
 
     /// Returns the root DOM node (and optionally the subtree) of the page.
-    ///
-    /// # Note: This does not return the actual HTML document of the page. To
-    /// retrieve the HTML content of the page see `Page::content`.
-    pub async fn get_document(&self) -> Result<Node> {
-        let resp = self.execute(GetDocumentParams::default()).await?;
-        Ok(resp.result.root)
+    pub async fn get_document_node(&self) -> Result<Node> {
+        Ok(self.inner.get_document().await?.root)
     }
 
     /// Returns the first element in the document which matches the given CSS
@@ -254,14 +250,14 @@ impl Page {
     ///
     /// Execute a query selector on the document's node.
     pub async fn find_element(&self, selector: impl Into<String>) -> Result<Element> {
-        let root = self.get_document().await?.node_id;
+        let root = self.get_document_node().await?.node_id;
         let node_id = self.inner.find_element(selector, root).await?;
         Element::new(Arc::clone(&self.inner), node_id).await
     }
 
     /// Return all `Element`s in the document that match the given selector
     pub async fn find_elements(&self, selector: impl Into<String>) -> Result<Vec<Element>> {
-        let root = self.get_document().await?.node_id;
+        let root = self.get_document_node().await?.node_id;
         let node_ids = self.inner.find_elements(selector, root).await?;
         Element::from_nodes(&self.inner, &node_ids).await
     }
@@ -271,14 +267,14 @@ impl Page {
     ///
     /// Execute a xpath selector on the document's node.
     pub async fn find_xpath(&self, selector: impl Into<String>) -> Result<Element> {
-        self.get_document().await?;
+        self.inner.get_document().await?;
         let node_id = self.inner.find_xpaths(selector).await?[0];
         Element::new(Arc::clone(&self.inner), node_id).await
     }
 
     /// Return all `Element`s in the document that match the given xpath selector
     pub async fn find_xpaths(&self, selector: impl Into<String>) -> Result<Vec<Element>> {
-        self.get_document().await?;
+        self.inner.get_document().await?;
         let node_ids = self.inner.find_xpaths(selector).await?;
         Element::from_nodes(&self.inner, &node_ids).await
     }
@@ -366,6 +362,18 @@ impl Page {
     /// ```
     pub async fn click(&self, point: Point) -> Result<&Self> {
         self.inner.click(point).await?;
+        Ok(self)
+    }
+
+    // Scroll/move viewport to Point position
+    pub async fn scroll(&self, point: Point) -> Result<&Self> {
+        let mut rect = self.layout_metrics().await?.css_content_size;
+
+        rect.x = point.x;
+        rect.y = point.y;
+
+        self.inner.scroll(rect).await?;
+
         Ok(self)
     }
 
