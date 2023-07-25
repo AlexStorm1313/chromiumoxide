@@ -388,23 +388,22 @@ impl Page {
 
         let mut viewport = screenshot_params.viewport();
         let mut device_metrics = screenshot_params.device_metrics();
-
+        let (width, height) = screenshot_params.screenshot_dimensions();
         let mut capture_screenshot_params = screenshot_params.capture_screenshot_params.clone();
 
         let metrics = self.layout_metrics().await?;
 
         // Do the image resize magic
-        if let Some((width, height)) = screenshot_params.screenshot_dimensions {
-            viewport.scale = (((width as f64 - metrics.css_visual_viewport.client_width)
-                / metrics.css_visual_viewport.client_width)
-                + 1.)
-                / device_metrics.device_scale_factor;
-        } else {
-            viewport.scale = (((viewport.width - metrics.css_visual_viewport.client_width)
-                / metrics.css_visual_viewport.client_width)
-                + 1.)
-                / device_metrics.device_scale_factor;
-        }
+        viewport.scale = (((width as f64 - metrics.css_visual_viewport.client_width)
+            / metrics.css_visual_viewport.client_width)
+            + 1.)
+            / device_metrics.device_scale_factor;
+
+        let corrected_height =
+            (height as f64 / viewport.scale) / device_metrics.device_scale_factor;
+
+        viewport.height = corrected_height;
+        device_metrics.height = corrected_height as i64;
 
         // Resize window to load all content on the page
         if screenshot_params.full_page() {
@@ -412,8 +411,6 @@ impl Page {
             viewport.height = metrics.css_content_size.height;
             device_metrics.width = metrics.css_content_size.width as i64;
             device_metrics.height = metrics.css_content_size.height as i64;
-
-            self.inner.set_device_metrics(device_metrics).await?;
         }
 
         if screenshot_params.omit_background() {
@@ -428,6 +425,8 @@ impl Page {
         }
 
         capture_screenshot_params.clip = Some(viewport.clone());
+        self.inner.set_device_metrics(device_metrics).await?;
+
         let screenshot = self.inner.screenshot(capture_screenshot_params).await?;
 
         if screenshot_params.omit_background() {
@@ -1106,6 +1105,17 @@ impl ScreenshotParams {
                 .as_ref()
                 .map_or(true, |f| f == &CaptureScreenshotFormat::Png)
     }
+
+    pub(crate) fn screenshot_dimensions(&self) -> (i64, i64) {
+        self.screenshot_dimensions.unwrap_or({
+            let viewport = self.viewport.clone().unwrap_or_default();
+
+            (
+                (viewport.width as f64 * viewport.device_scale_factor.unwrap_or(1.)) as i64,
+                (viewport.height as f64 * viewport.device_scale_factor.unwrap_or(1.)) as i64,
+            )
+        })
+    }
 }
 
 /// Page screenshot parameters with extra options.
@@ -1143,7 +1153,7 @@ impl ScreenshotParamsBuilder {
         self
     }
 
-    /// Capture the screenshot beyond the viewport of the browser
+    /// Capture the screenshot beyond the viewport of the browser, this gets overridden by setting a clip(Viewport)
     pub fn capture_beyond_viewport(mut self, capture_beyond_viewport: impl Into<bool>) -> Self {
         self.capture_screenshot_params.capture_beyond_viewport =
             Some(capture_beyond_viewport.into());
