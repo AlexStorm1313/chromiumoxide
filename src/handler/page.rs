@@ -7,8 +7,9 @@ use futures::{SinkExt, StreamExt};
 
 use chromiumoxide_cdp::cdp::browser_protocol::browser::{GetVersionParams, GetVersionReturns};
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
-    DiscardSearchResultsParams, GetSearchResultsParams, NodeId, PerformSearchParams,
-    QuerySelectorAllParams, QuerySelectorParams, Rgba,
+    self, DiscardSearchResultsParams, GetDocumentParams, GetDocumentReturns,
+    GetSearchResultsParams, Node, NodeId, PerformSearchParams, QuerySelectorAllParams,
+    QuerySelectorParams, Rect, Rgba, ScrollIntoViewIfNeededParams, ScrollIntoViewIfNeededReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
     ClearDeviceMetricsOverrideParams, ClearDeviceMetricsOverrideReturns,
@@ -209,6 +210,18 @@ impl PageInner {
         Ok(self)
     }
 
+    pub async fn scroll(&self, rect: impl Into<Rect>) -> Result<ScrollIntoViewIfNeededReturns> {
+        Ok(self
+            .execute(
+                ScrollIntoViewIfNeededParams::builder()
+                    .backend_node_id(self.get_document().await?.root.backend_node_id)
+                    .rect(rect)
+                    .build(),
+            )
+            .await?
+            .result)
+    }
+
     /// This simulates pressing keys on the page.
     ///
     /// # Note The `input` is treated as series of `KeyDefinition`s, where each
@@ -356,6 +369,14 @@ impl PageInner {
             .execute(GetLayoutMetricsParams::default())
             .await?
             .result)
+    }
+
+    /// Returns the root DOM node (and optionally the subtree) of the page.
+    ///
+    /// # Note: This does not return the actual HTML document of the page. To
+    /// retrieve the HTML content of the page see `Page::content`.
+    pub async fn get_document(&self) -> Result<GetDocumentReturns> {
+        Ok(self.execute(GetDocumentParams::default()).await?.result)
     }
 
     /// Screenshot function for CaptureScreenshot command
