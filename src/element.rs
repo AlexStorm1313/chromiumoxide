@@ -18,6 +18,7 @@ use chromiumoxide_cdp::cdp::js_protocol::runtime::{
     CallFunctionOnReturns, GetPropertiesParams, PropertyDescriptor, RemoteObjectId,
     RemoteObjectType,
 };
+use tracing::debug;
 
 use crate::error::{CdpError, Result};
 use crate::handler::PageInner;
@@ -428,7 +429,11 @@ impl Element {
             .collect())
     }
 
-    /// Scrolls the element into and takes a screenshot of it
+    /// Takes a screenshot of the selected Element
+    ///
+    /// Instead of scrolling the element into the Viewport resize the device
+    /// to display/render all of the page content. This method still works
+    /// even if the element is bigger than the current Viewport
     pub async fn screenshot(
         &self,
         screenshot_params: impl Into<page::ScreenshotParams>,
@@ -437,59 +442,32 @@ impl Element {
 
         let screenshot_params: page::ScreenshotParams = screenshot_params.into();
 
-        let mut viewport = screenshot_params.viewport();
+        // let mut viewport = screenshot_params.viewport();
         let mut device_metrics = screenshot_params.device_metrics();
         let (width, height) = screenshot_params.screenshot_dimensions();
         let mut capture_screenshot_params = screenshot_params.capture_screenshot_params.clone();
 
         let metrics = self.tab.layout_metrics().await?;
+        let mut viewport: Viewport = self.bounding_box().await?.into();
 
-        // self.tab
-        //     .scroll(Rect {
-        //         x: 0.,
-        //         y: 940.,
-        //         width: 800.,
-        //         height: 600.,
-        //     })
-        //     .await?;
+        // Do the image resize magic
+        viewport.scale = (((device_metrics.width as f64 - viewport.width) / viewport.width) + 1.)
+            / device_metrics.device_scale_factor;
 
-        let mut bounding_box = self.bounding_box().await?;
-        // bounding_box.x += metrics.css_layout_viewport.page_x as f64;
-        // bounding_box.y += metrics.css_layout_viewport.page_y as f64;
-        let mut viewport = Viewport {
-            x: bounding_box.x,
-            y: bounding_box.y,
-            width: bounding_box.width,
-            height: bounding_box.height,
-            scale: 1.,
-        };
+        let corrected_height = (device_metrics.height as f64 / viewport.scale);
 
-        // panic!("{:?}", bounding_box);
+        debug!("{:?}", corrected_height);
 
-        // if let Some((width, height)) = screenshot_params.screenshot_dimensions {
-        //     viewport.scale = (((width as f64 - bounding_box.width) / bounding_box.width) + 1.)
-        //         / device_metrics.device_scale_factor;
-        // } else {
-        //     viewport.scale = 1. / device_metrics.device_scale_factor;
-        // }
+        viewport.y -= (corrected_height / 2.);
+        viewport.height = corrected_height;
 
-        if screenshot_params.omit_background() {
-            self.tab
-                .set_background_color(Some(dom::Rgba {
-                    r: 0,
-                    g: 0,
-                    b: 0,
-                    a: Some(0.),
-                }))
-                .await?;
-        }
+        // Resize window to load all content on the page
+        device_metrics.width = metrics.css_content_size.width as i64;
+        device_metrics.height = metrics.css_content_size.height as i64;
+        self.tab.set_device_metrics(device_metrics).await?;
 
         capture_screenshot_params.clip = Some(viewport);
         let screenshot = self.tab.screenshot(capture_screenshot_params).await?;
-
-        if screenshot_params.omit_background() {
-            self.tab.set_background_color(None).await?;
-        }
 
         Ok(screenshot)
     }
