@@ -7,9 +7,9 @@ use futures::{SinkExt, StreamExt};
 
 use chromiumoxide_cdp::cdp::browser_protocol::browser::{GetVersionParams, GetVersionReturns};
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
-    self, DiscardSearchResultsParams, GetDocumentParams, GetDocumentReturns,
-    GetSearchResultsParams, Node, NodeId, PerformSearchParams, QuerySelectorAllParams,
-    QuerySelectorParams, Rect, Rgba, ScrollIntoViewIfNeededParams, ScrollIntoViewIfNeededReturns,
+    DiscardSearchResultsParams, GetDocumentParams, GetDocumentReturns, GetSearchResultsParams,
+    NodeId, PerformSearchParams, QuerySelectorAllParams, QuerySelectorParams, Rect, Rgba,
+    ScrollIntoViewIfNeededParams, ScrollIntoViewIfNeededReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
     ClearDeviceMetricsOverrideParams, ClearDeviceMetricsOverrideReturns,
@@ -21,7 +21,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::input::{
     MouseButton,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::{
-    CaptureScreenshotParams, GetLayoutMetricsParams, GetLayoutMetricsReturns, Viewport,
+    CaptureScreenshotParams, GetLayoutMetricsParams, GetLayoutMetricsReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::target::{ActivateTargetParams, SessionId, TargetId};
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{

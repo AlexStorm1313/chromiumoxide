@@ -4,21 +4,17 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use chromiumoxide_cdp::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use futures::{future, Future, FutureExt, Stream};
 
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
     self, BackendNodeId, DescribeNodeParams, GetBoxModelParams, GetContentQuadsParams, Node,
-    NodeId, Rect, ResolveNodeParams, ScrollIntoViewIfNeededParams,
+    NodeId, ResolveNodeParams, ScrollIntoViewIfNeededParams,
 };
-use chromiumoxide_cdp::cdp::browser_protocol::page::{
-    CaptureScreenshotFormat, CaptureScreenshotParams, Viewport,
-};
+use chromiumoxide_cdp::cdp::browser_protocol::page::Viewport;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
     CallFunctionOnReturns, GetPropertiesParams, PropertyDescriptor, RemoteObjectId,
     RemoteObjectType,
 };
-use tracing::debug;
 
 use crate::error::{CdpError, Result};
 use crate::handler::PageInner;
@@ -494,15 +490,15 @@ impl Element {
     }
 
     // Save a screenshot of the element and write it to `output`
-    // pub async fn save_screenshot(
-    //     &self,
-    //     format: CaptureScreenshotFormat,
-    //     output: impl AsRef<Path>,
-    // ) -> Result<Vec<u8>> {
-    //     let img = self.screenshot(format).await?;
-    //     utils::write(output.as_ref(), &img).await?;
-    //     Ok(img)
-    // }
+    pub async fn save_screenshot(
+        &self,
+        screenshot_params: impl Into<page::ScreenshotParams>,
+        output: impl AsRef<Path>,
+    ) -> Result<Vec<u8>> {
+        let img = self.screenshot(screenshot_params).await?;
+        utils::write(output.as_ref(), &img).await?;
+        Ok(img)
+    }
 }
 
 pub type AttributeValueFuture<'a> = Option<(
