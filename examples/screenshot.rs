@@ -32,7 +32,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // get the top post and save a screenshot of it
     page.find_element("table.itemlist tr")
         .await?
-        .save_screenshot(CaptureScreenshotFormat::Png, "top-post.png")
+        .save_screenshot(
+            ScreenshotParams::builder()
+                .format(CaptureScreenshotFormat::Png)
+                .build(),
+            "top-post.png",
+        )
         .await?;
 
     handle.await;

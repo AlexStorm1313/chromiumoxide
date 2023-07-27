@@ -7,12 +7,10 @@ use std::task::{Context, Poll};
 use futures::{future, Future, FutureExt, Stream};
 
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
-    BackendNodeId, DescribeNodeParams, GetBoxModelParams, GetContentQuadsParams, Node, NodeId,
-    ResolveNodeParams,
+    self, BackendNodeId, DescribeNodeParams, GetBoxModelParams, GetContentQuadsParams, Node,
+    NodeId, ResolveNodeParams, ScrollIntoViewIfNeededParams,
 };
-use chromiumoxide_cdp::cdp::browser_protocol::page::{
-    CaptureScreenshotFormat, CaptureScreenshotParams, Viewport,
-};
+use chromiumoxide_cdp::cdp::browser_protocol::page::Viewport;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
     CallFunctionOnReturns, GetPropertiesParams, PropertyDescriptor, RemoteObjectId,
     RemoteObjectType,
@@ -21,7 +19,7 @@ use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 use crate::error::{CdpError, Result};
 use crate::handler::PageInner;
 use crate::layout::{BoundingBox, BoxModel, ElementQuad, Point};
-use crate::utils;
+use crate::{page, utils};
 
 /// Represents a [DOM Element](https://developer.mozilla.org/en-US/docs/Web/API/Element).
 #[derive(Debug)]
@@ -225,7 +223,7 @@ impl Element {
     ///
     /// Fails if the element's node is not a HTML element or is detached from
     /// the document
-    pub async fn scroll_into_view(&self) -> Result<&Self> {
+    pub async fn scroll_into_view_js(&self) -> Result<&Self> {
         let resp = self
             .call_js_fn(
                 "async function() {
@@ -258,6 +256,22 @@ impl Element {
             let error_text = resp.result.value.unwrap().as_str().unwrap().to_string();
             return Err(CdpError::ScrollingFailed(error_text));
         }
+        Ok(self)
+    }
+
+    /// Scrolls the element into view.
+    ///
+    /// Fails if the element's node is not a HTML element or is detached from
+    /// the document
+    pub async fn scroll_into_view(&self) -> Result<&Self> {
+        self.tab
+            .execute(
+                ScrollIntoViewIfNeededParams::builder()
+                    .backend_node_id(self.backend_node_id)
+                    .node_id(self.node_id)
+                    .build(),
+            )
+            .await?;
         Ok(self)
     }
 
@@ -411,39 +425,77 @@ impl Element {
             .collect())
     }
 
-    /// Scrolls the element into and takes a screenshot of it
-    pub async fn screenshot(&self, format: CaptureScreenshotFormat) -> Result<Vec<u8>> {
-        let mut bounding_box = self.scroll_into_view().await?.bounding_box().await?;
-        let viewport = self.tab.layout_metrics().await?.css_layout_viewport;
+    /// Takes a screenshot of the selected Element
+    ///
+    /// Instead of scrolling the element into the Viewport resize the device
+    /// to display/render all of the page content. This method still works
+    /// even if the element is bigger than the current Viewport
+    pub async fn screenshot(
+        &self,
+        screenshot_params: impl Into<page::ScreenshotParams>,
+    ) -> Result<Vec<u8>> {
+        self.tab.activate().await?;
 
-        bounding_box.x += viewport.page_x as f64;
-        bounding_box.y += viewport.page_y as f64;
+        let screenshot_params: page::ScreenshotParams = screenshot_params.into();
 
-        let clip = Viewport {
-            x: viewport.page_x as f64 + bounding_box.x,
-            y: viewport.page_y as f64 + bounding_box.y,
-            width: bounding_box.width,
-            height: bounding_box.height,
-            scale: 1.,
-        };
+        let mut viewport: Viewport = self.bounding_box().await?.into();
+        let mut device_metrics = screenshot_params.device_metrics();
+        let mut capture_screenshot_params = screenshot_params.capture_screenshot_params.clone();
+
+        let metrics = self.tab.layout_metrics().await?;
+
+        // Do the image resize magic
+        if let Some((width, height)) = screenshot_params.screenshot_dimensions() {
+            viewport.scale = (((width as f64 - viewport.width) / viewport.width) + 1.)
+                / device_metrics.device_scale_factor;
+
+            if height != 0 {
+                let corrected_height =
+                    (height as f64 / viewport.scale) / device_metrics.device_scale_factor;
+
+                viewport.y -= (corrected_height / 2.) - (viewport.height / 2.);
+                viewport.height = corrected_height;
+            }
+        }
+
+        // Resize window to load all content on the page
+        device_metrics.width = metrics.css_content_size.width as i64;
+        device_metrics.height = metrics.css_content_size.height as i64;
+
+        if screenshot_params.omit_background() {
+            self.tab
+                .set_background_color(Some(dom::Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: Some(0.),
+                }))
+                .await?;
+        }
+
+        capture_screenshot_params.clip = Some(viewport);
+        self.tab.set_device_metrics(device_metrics).await?;
+
+        let screenshot = self.tab.screenshot(capture_screenshot_params).await?;
+
+        if screenshot_params.omit_background() {
+            self.tab.set_background_color(None).await?;
+        }
 
         self.tab
-            .screenshot(
-                CaptureScreenshotParams::builder()
-                    .format(format)
-                    .clip(clip)
-                    .build(),
-            )
-            .await
+            .set_device_metrics(screenshot_params.device_metrics())
+            .await?;
+
+        Ok(screenshot)
     }
 
-    /// Save a screenshot of the element and write it to `output`
+    // Save a screenshot of the element and write it to `output`
     pub async fn save_screenshot(
         &self,
-        format: CaptureScreenshotFormat,
+        screenshot_params: impl Into<page::ScreenshotParams>,
         output: impl AsRef<Path>,
     ) -> Result<Vec<u8>> {
-        let img = self.screenshot(format).await?;
+        let img = self.screenshot(screenshot_params).await?;
         utils::write(output.as_ref(), &img).await?;
         Ok(img)
     }

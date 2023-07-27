@@ -7,7 +7,7 @@ use futures::{stream, SinkExt, StreamExt};
 
 use chromiumoxide_cdp::cdp::browser_protocol::dom::*;
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
-    MediaFeature, SetEmulatedMediaParams, SetTimezoneOverrideParams,
+    MediaFeature, SetDeviceMetricsOverrideParams, SetEmulatedMediaParams, SetTimezoneOverrideParams,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::network::{
     Cookie, CookieParam, DeleteCookiesParams, GetCookiesParams, SetCookiesParams,
@@ -31,7 +31,7 @@ use crate::handler::commandfuture::CommandFuture;
 use crate::handler::domworld::DOMWorldKind;
 use crate::handler::httpfuture::HttpFuture;
 use crate::handler::target::TargetMessage;
-use crate::handler::PageInner;
+use crate::handler::{viewport, PageInner};
 use crate::js::{Evaluation, EvaluationResult};
 use crate::layout::Point;
 use crate::listeners::{EventListenerRequest, EventStream};
@@ -240,12 +240,8 @@ impl Page {
     }
 
     /// Returns the root DOM node (and optionally the subtree) of the page.
-    ///
-    /// # Note: This does not return the actual HTML document of the page. To
-    /// retrieve the HTML content of the page see `Page::content`.
-    pub async fn get_document(&self) -> Result<Node> {
-        let resp = self.execute(GetDocumentParams::default()).await?;
-        Ok(resp.result.root)
+    pub async fn get_document_node(&self) -> Result<Node> {
+        Ok(self.inner.get_document().await?.root)
     }
 
     /// Returns the first element in the document which matches the given CSS
@@ -253,14 +249,14 @@ impl Page {
     ///
     /// Execute a query selector on the document's node.
     pub async fn find_element(&self, selector: impl Into<String>) -> Result<Element> {
-        let root = self.get_document().await?.node_id;
+        let root = self.get_document_node().await?.node_id;
         let node_id = self.inner.find_element(selector, root).await?;
         Element::new(Arc::clone(&self.inner), node_id).await
     }
 
     /// Return all `Element`s in the document that match the given selector
     pub async fn find_elements(&self, selector: impl Into<String>) -> Result<Vec<Element>> {
-        let root = self.get_document().await?.node_id;
+        let root = self.get_document_node().await?.node_id;
         let node_ids = self.inner.find_elements(selector, root).await?;
         Element::from_nodes(&self.inner, &node_ids).await
     }
@@ -270,14 +266,14 @@ impl Page {
     ///
     /// Execute a xpath selector on the document's node.
     pub async fn find_xpath(&self, selector: impl Into<String>) -> Result<Element> {
-        self.get_document().await?;
+        self.inner.get_document().await?;
         let node_id = self.inner.find_xpaths(selector).await?[0];
         Element::new(Arc::clone(&self.inner), node_id).await
     }
 
     /// Return all `Element`s in the document that match the given xpath selector
     pub async fn find_xpaths(&self, selector: impl Into<String>) -> Result<Vec<Element>> {
-        self.get_document().await?;
+        self.inner.get_document().await?;
         let node_ids = self.inner.find_xpaths(selector).await?;
         Element::from_nodes(&self.inner, &node_ids).await
     }
@@ -368,6 +364,18 @@ impl Page {
         Ok(self)
     }
 
+    // Scroll/move viewport to Point position
+    pub async fn scroll(&self, point: Point) -> Result<&Self> {
+        let mut rect = self.layout_metrics().await?.css_content_size;
+
+        rect.x = point.x;
+        rect.y = point.y;
+
+        self.inner.scroll(rect).await?;
+
+        Ok(self)
+    }
+
     /// Dispatches a `mousemove` event and moves the mouse to the position of
     /// the `point` where `Point.x` is the horizontal position of the mouse and
     /// `Point.y` the vertical position of the mouse.
@@ -377,8 +385,71 @@ impl Page {
     }
 
     /// Take a screenshot of the current page
-    pub async fn screenshot(&self, params: impl Into<ScreenshotParams>) -> Result<Vec<u8>> {
-        self.inner.screenshot(params).await
+    pub async fn screenshot(
+        &self,
+        screenshot_params: impl Into<ScreenshotParams>,
+    ) -> Result<Vec<u8>> {
+        self.activate().await?;
+
+        let screenshot_params: ScreenshotParams = screenshot_params.into();
+
+        let mut viewport = screenshot_params.viewport();
+        let mut device_metrics = screenshot_params.device_metrics();
+        let mut capture_screenshot_params = screenshot_params.capture_screenshot_params.clone();
+
+        let metrics = self.layout_metrics().await?;
+
+        // Do the image resize magic
+        if let Some((width, height)) = screenshot_params.screenshot_dimensions() {
+            viewport.scale = (((width as f64 - metrics.css_visual_viewport.client_width)
+                / metrics.css_visual_viewport.client_width)
+                + 1.)
+                / device_metrics.device_scale_factor;
+
+            if height != 0 {
+                let corrected_height =
+                    (height as f64 / viewport.scale) / device_metrics.device_scale_factor;
+
+                viewport.height = corrected_height;
+                device_metrics.height = corrected_height as i64;
+            }
+        }
+
+        // Resize window to load all content on the page
+        if screenshot_params.full_page() {
+            viewport.width = metrics.css_content_size.width;
+            viewport.height = metrics.css_content_size.height;
+            device_metrics.width = metrics.css_content_size.width as i64;
+            device_metrics.height = metrics.css_content_size.height as i64;
+        }
+
+        if screenshot_params.omit_background() {
+            self.inner
+                .set_background_color(Some(Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: Some(0.),
+                }))
+                .await?;
+        }
+
+        capture_screenshot_params.clip = Some(viewport);
+        self.inner.set_device_metrics(device_metrics).await?;
+
+        let screenshot = self.inner.screenshot(capture_screenshot_params).await?;
+
+        if screenshot_params.omit_background() {
+            self.inner.set_background_color(None).await?;
+        }
+
+        if screenshot_params.full_page() {
+            self.inner
+                .set_device_metrics(screenshot_params.device_metrics())
+                .await?;
+        }
+
+        Ok(screenshot)
     }
 
     /// Save a screenshot of the page
@@ -1007,17 +1078,29 @@ fn validate_cookie_url(url: &str) -> Result<()> {
 /// Page screenshot parameters with extra options.
 #[derive(Debug, Default)]
 pub struct ScreenshotParams {
-    /// Chrome DevTools Protocol screenshot options.
-    pub cdp_params: CaptureScreenshotParams,
+    /// Chrome DevTools Protocol screenshot options. Clip options
+    pub capture_screenshot_params: CaptureScreenshotParams,
+    // Supply device metrics, usefull to keep device_scaling when full_page is set to true
+    pub viewport: Option<viewport::Viewport>,
     /// Take full page screenshot.
     pub full_page: Option<bool>,
     /// Make the background transparent (png only).
     pub omit_background: Option<bool>,
+    // Dimensions of the returned image
+    pub screenshot_dimensions: Option<(i64, i64)>,
 }
 
 impl ScreenshotParams {
     pub fn builder() -> ScreenshotParamsBuilder {
         Default::default()
+    }
+
+    pub(crate) fn viewport(&self) -> Viewport {
+        self.viewport.clone().unwrap_or_default().into()
+    }
+
+    pub(crate) fn device_metrics(&self) -> SetDeviceMetricsOverrideParams {
+        self.viewport.clone().unwrap_or_default().into()
     }
 
     pub(crate) fn full_page(&self) -> bool {
@@ -1027,43 +1110,62 @@ impl ScreenshotParams {
     pub(crate) fn omit_background(&self) -> bool {
         self.omit_background.unwrap_or(false)
             && self
-                .cdp_params
+                .capture_screenshot_params
                 .format
                 .as_ref()
                 .map_or(true, |f| f == &CaptureScreenshotFormat::Png)
     }
+
+    pub(crate) fn screenshot_dimensions(&self) -> Option<(i64, i64)> {
+        self.screenshot_dimensions
+    }
 }
 
-/// Page screenshot parameters builder with extra options.
+/// Page screenshot parameters with extra options.
 #[derive(Debug, Default)]
 pub struct ScreenshotParamsBuilder {
-    cdp_params: CaptureScreenshotParams,
-    full_page: Option<bool>,
-    omit_background: Option<bool>,
+    pub capture_screenshot_params: CaptureScreenshotParams,
+    pub viewport: Option<viewport::Viewport>,
+    pub full_page: Option<bool>,
+    pub omit_background: Option<bool>,
+    pub screenshot_dimensions: Option<(i64, i64)>,
 }
 
 impl ScreenshotParamsBuilder {
     /// Image compression format (defaults to png).
     pub fn format(mut self, format: impl Into<CaptureScreenshotFormat>) -> Self {
-        self.cdp_params.format = Some(format.into());
+        self.capture_screenshot_params.format = Some(format.into());
         self
     }
 
     /// Compression quality from range [0..100] (jpeg only).
     pub fn quality(mut self, quality: impl Into<i64>) -> Self {
-        self.cdp_params.quality = Some(quality.into());
+        self.capture_screenshot_params.quality = Some(quality.into());
         self
     }
 
     /// Capture the screenshot of a given region only.
     pub fn clip(mut self, clip: impl Into<Viewport>) -> Self {
-        self.cdp_params.clip = Some(clip.into());
+        self.capture_screenshot_params.clip = Some(clip.into());
         self
     }
 
     /// Capture the screenshot from the surface, rather than the view (defaults to true).
     pub fn from_surface(mut self, from_surface: impl Into<bool>) -> Self {
-        self.cdp_params.from_surface = Some(from_surface.into());
+        self.capture_screenshot_params.from_surface = Some(from_surface.into());
+        self
+    }
+
+    /// Capture the screenshot beyond the viewport of the browser, this gets overridden by setting a clip(Viewport)
+    pub fn capture_beyond_viewport(mut self, capture_beyond_viewport: impl Into<bool>) -> Self {
+        self.capture_screenshot_params.capture_beyond_viewport =
+            Some(capture_beyond_viewport.into());
+        self
+    }
+
+    /// Set the used viewport for taking the screenshot, also used to revert to when taking full_page screenshots
+    pub fn viewport(mut self, viewport: impl Into<viewport::Viewport>) -> Self {
+        self.viewport = Some(viewport.into());
         self
     }
 
@@ -1079,19 +1181,27 @@ impl ScreenshotParamsBuilder {
         self
     }
 
+    /// Set the screenshot dimensions
+    pub fn screenshot_dimensions(mut self, screenshot_dimensions: impl Into<(i64, i64)>) -> Self {
+        self.screenshot_dimensions = Some(screenshot_dimensions.into());
+        self
+    }
+
     pub fn build(self) -> ScreenshotParams {
         ScreenshotParams {
-            cdp_params: self.cdp_params,
+            capture_screenshot_params: self.capture_screenshot_params,
+            viewport: self.viewport,
             full_page: self.full_page,
             omit_background: self.omit_background,
+            screenshot_dimensions: self.screenshot_dimensions,
         }
     }
 }
 
 impl From<CaptureScreenshotParams> for ScreenshotParams {
-    fn from(cdp_params: CaptureScreenshotParams) -> Self {
+    fn from(capture_screenshot_params: CaptureScreenshotParams) -> Self {
         Self {
-            cdp_params,
+            capture_screenshot_params,
             ..Default::default()
         }
     }

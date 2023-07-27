@@ -7,19 +7,21 @@ use futures::{SinkExt, StreamExt};
 
 use chromiumoxide_cdp::cdp::browser_protocol::browser::{GetVersionParams, GetVersionReturns};
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
-    DiscardSearchResultsParams, GetSearchResultsParams, NodeId, PerformSearchParams,
-    QuerySelectorAllParams, QuerySelectorParams, Rgba,
+    DiscardSearchResultsParams, GetDocumentParams, GetDocumentReturns, GetSearchResultsParams,
+    NodeId, PerformSearchParams, QuerySelectorAllParams, QuerySelectorParams, Rect, Rgba,
+    ScrollIntoViewIfNeededParams, ScrollIntoViewIfNeededReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
-    ClearDeviceMetricsOverrideParams, SetDefaultBackgroundColorOverrideParams,
-    SetDeviceMetricsOverrideParams,
+    ClearDeviceMetricsOverrideParams, ClearDeviceMetricsOverrideReturns,
+    SetDefaultBackgroundColorOverrideParams, SetDefaultBackgroundColorOverrideReturns,
+    SetDeviceMetricsOverrideParams, SetDeviceMetricsOverrideReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::input::{
     DispatchKeyEventParams, DispatchKeyEventType, DispatchMouseEventParams, DispatchMouseEventType,
     MouseButton,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::{
-    GetLayoutMetricsParams, GetLayoutMetricsReturns, Viewport,
+    CaptureScreenshotParams, GetLayoutMetricsParams, GetLayoutMetricsReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::target::{ActivateTargetParams, SessionId, TargetId};
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
@@ -36,7 +38,6 @@ use crate::handler::target::{GetExecutionContext, TargetMessage};
 use crate::handler::target_message_future::TargetMessageFuture;
 use crate::js::EvaluationResult;
 use crate::layout::Point;
-use crate::page::ScreenshotParams;
 use crate::{keys, utils, ArcHttpRequest};
 
 #[derive(Debug)]
@@ -209,6 +210,18 @@ impl PageInner {
         Ok(self)
     }
 
+    pub async fn scroll(&self, rect: impl Into<Rect>) -> Result<ScrollIntoViewIfNeededReturns> {
+        Ok(self
+            .execute(
+                ScrollIntoViewIfNeededParams::builder()
+                    .backend_node_id(self.get_document().await?.root.backend_node_id)
+                    .rect(rect)
+                    .build(),
+            )
+            .await?
+            .result)
+    }
+
     /// This simulates pressing keys on the page.
     ///
     /// # Note The `input` is treated as series of `KeyDefinition`s, where each
@@ -358,60 +371,49 @@ impl PageInner {
             .result)
     }
 
-    pub async fn screenshot(&self, params: impl Into<ScreenshotParams>) -> Result<Vec<u8>> {
-        self.activate().await?;
-        let params = params.into();
-        let full_page = params.full_page();
-        let omit_background = params.omit_background();
+    /// Returns the root DOM node (and optionally the subtree) of the page.
+    ///
+    /// # Note: This does not return the actual HTML document of the page. To
+    /// retrieve the HTML content of the page see `Page::content`.
+    pub async fn get_document(&self) -> Result<GetDocumentReturns> {
+        Ok(self.execute(GetDocumentParams::default()).await?.result)
+    }
 
-        let mut cdp_params = params.cdp_params;
+    /// Screenshot function for CaptureScreenshot command
+    pub async fn screenshot(
+        &self,
+        capture_screenshot_params: CaptureScreenshotParams,
+    ) -> Result<Vec<u8>> {
+        Ok(utils::base64::decode(
+            &self.execute(capture_screenshot_params).await?.result.data,
+        )?)
+    }
 
-        if full_page {
-            let metrics = self.layout_metrics().await?;
-            let width = metrics.css_content_size.width;
-            let height = metrics.css_content_size.height;
+    /// Overrides the background color of the page, usefull when taking screenshots
+    pub async fn set_background_color(
+        &self,
+        color: Option<Rgba>,
+    ) -> Result<SetDefaultBackgroundColorOverrideReturns> {
+        Ok(self
+            .execute(SetDefaultBackgroundColorOverrideParams { color })
+            .await?
+            .result)
+    }
 
-            cdp_params.clip = Some(Viewport {
-                x: 0.,
-                y: 0.,
-                width,
-                height,
-                scale: 1.,
-            });
+    /// Overrides the current device emultation
+    pub async fn set_device_metrics(
+        &self,
+        device_metrics: impl Into<SetDeviceMetricsOverrideParams>,
+    ) -> Result<SetDeviceMetricsOverrideReturns> {
+        Ok(self.execute(device_metrics.into()).await?.result)
+    }
 
-            self.execute(SetDeviceMetricsOverrideParams::new(
-                width as i64,
-                height as i64,
-                1.,
-                false,
-            ))
-            .await?;
-        }
-
-        if omit_background {
-            self.execute(SetDefaultBackgroundColorOverrideParams {
-                color: Some(Rgba {
-                    r: 0,
-                    g: 0,
-                    b: 0,
-                    a: Some(0.),
-                }),
-            })
-            .await?;
-        }
-
-        let res = self.execute(cdp_params).await?.result;
-
-        if omit_background {
-            self.execute(SetDefaultBackgroundColorOverrideParams { color: None })
-                .await?;
-        }
-
-        if full_page {
-            self.execute(ClearDeviceMetricsOverrideParams {}).await?;
-        }
-
-        Ok(utils::base64::decode(&res.data)?)
+    /// Clears the current device emultation back to default
+    pub async fn clear_device_metrics(&self) -> Result<ClearDeviceMetricsOverrideReturns> {
+        Ok(self
+            .execute(ClearDeviceMetricsOverrideParams {})
+            .await?
+            .result)
     }
 }
 

@@ -295,3 +295,15 @@ pub struct BoundingBox {
     /// the height of the element in pixels.
     pub height: f64,
 }
+
+impl From<BoundingBox> for Viewport {
+    fn from(value: BoundingBox) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+            width: value.width,
+            height: value.height,
+            scale: 1.,
+        }
+    }
+}
