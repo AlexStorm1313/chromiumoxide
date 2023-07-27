@@ -396,22 +396,25 @@ impl Page {
 
         let mut viewport = screenshot_params.viewport();
         let mut device_metrics = screenshot_params.device_metrics();
-        let (width, height) = screenshot_params.screenshot_dimensions();
         let mut capture_screenshot_params = screenshot_params.capture_screenshot_params.clone();
 
         let metrics = self.layout_metrics().await?;
 
         // Do the image resize magic
-        viewport.scale = (((width as f64 - metrics.css_visual_viewport.client_width)
-            / metrics.css_visual_viewport.client_width)
-            + 1.)
-            / device_metrics.device_scale_factor;
+        if let Some((width, height)) = screenshot_params.screenshot_dimensions() {
+            viewport.scale = (((width as f64 - metrics.css_visual_viewport.client_width)
+                / metrics.css_visual_viewport.client_width)
+                + 1.)
+                / device_metrics.device_scale_factor;
 
-        let corrected_height =
-            (height as f64 / viewport.scale) / device_metrics.device_scale_factor;
+            if height != 0 {
+                let corrected_height =
+                    (height as f64 / viewport.scale) / device_metrics.device_scale_factor;
 
-        viewport.height = corrected_height;
-        device_metrics.height = corrected_height as i64;
+                viewport.height = corrected_height;
+                device_metrics.height = corrected_height as i64;
+            }
+        }
 
         // Resize window to load all content on the page
         if screenshot_params.full_page() {
@@ -432,7 +435,7 @@ impl Page {
                 .await?;
         }
 
-        capture_screenshot_params.clip = Some(viewport.clone());
+        capture_screenshot_params.clip = Some(viewport);
         self.inner.set_device_metrics(device_metrics).await?;
 
         let screenshot = self.inner.screenshot(capture_screenshot_params).await?;
@@ -1114,15 +1117,8 @@ impl ScreenshotParams {
                 .map_or(true, |f| f == &CaptureScreenshotFormat::Png)
     }
 
-    pub(crate) fn screenshot_dimensions(&self) -> (i64, i64) {
-        self.screenshot_dimensions.unwrap_or({
-            let viewport = self.viewport.clone().unwrap_or_default();
-
-            (
-                (viewport.width as f64 * viewport.device_scale_factor.unwrap_or(1.)) as i64,
-                (viewport.height as f64 * viewport.device_scale_factor.unwrap_or(1.)) as i64,
-            )
-        })
+    pub(crate) fn screenshot_dimensions(&self) -> Option<(i64, i64)> {
+        self.screenshot_dimensions
     }
 }
 
