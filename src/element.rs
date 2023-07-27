@@ -442,32 +442,53 @@ impl Element {
 
         let screenshot_params: page::ScreenshotParams = screenshot_params.into();
 
-        // let mut viewport = screenshot_params.viewport();
+        let mut viewport: Viewport = self.bounding_box().await?.into();
         let mut device_metrics = screenshot_params.device_metrics();
-        let (width, height) = screenshot_params.screenshot_dimensions();
         let mut capture_screenshot_params = screenshot_params.capture_screenshot_params.clone();
 
         let metrics = self.tab.layout_metrics().await?;
-        let mut viewport: Viewport = self.bounding_box().await?.into();
 
         // Do the image resize magic
-        viewport.scale = (((device_metrics.width as f64 - viewport.width) / viewport.width) + 1.)
-            / device_metrics.device_scale_factor;
+        if let Some((width, height)) = screenshot_params.screenshot_dimensions() {
+            viewport.scale = (((width as f64 - viewport.width) / viewport.width) + 1.)
+                / device_metrics.device_scale_factor;
 
-        let corrected_height = (device_metrics.height as f64 / viewport.scale);
+            if height != 0 {
+                let corrected_height =
+                    (height as f64 / viewport.scale) / device_metrics.device_scale_factor;
 
-        debug!("{:?}", corrected_height);
-
-        viewport.y -= (corrected_height / 2.);
-        viewport.height = corrected_height;
+                viewport.y -= (corrected_height / 2.) - (viewport.height / 2.);
+                viewport.height = corrected_height;
+            }
+        }
 
         // Resize window to load all content on the page
         device_metrics.width = metrics.css_content_size.width as i64;
         device_metrics.height = metrics.css_content_size.height as i64;
-        self.tab.set_device_metrics(device_metrics).await?;
+
+        if screenshot_params.omit_background() {
+            self.tab
+                .set_background_color(Some(dom::Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: Some(0.),
+                }))
+                .await?;
+        }
 
         capture_screenshot_params.clip = Some(viewport);
+        self.tab.set_device_metrics(device_metrics).await?;
+
         let screenshot = self.tab.screenshot(capture_screenshot_params).await?;
+
+        if screenshot_params.omit_background() {
+            self.tab.set_background_color(None).await?;
+        }
+
+        self.tab
+            .set_device_metrics(screenshot_params.device_metrics())
+            .await?;
 
         Ok(screenshot)
     }
