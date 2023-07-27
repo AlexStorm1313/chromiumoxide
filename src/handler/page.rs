@@ -22,6 +22,8 @@ use chromiumoxide_cdp::cdp::browser_protocol::input::{
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::{
     CaptureScreenshotParams, GetLayoutMetricsParams, GetLayoutMetricsReturns,
+    ScreencastFrameAckParams, ScreencastFrameAckReturns, StartScreencastParams,
+    StartScreencastReturns, StopScreencastParams, StopScreencastReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::target::{ActivateTargetParams, SessionId, TargetId};
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
@@ -388,6 +390,55 @@ impl PageInner {
             &self.execute(capture_screenshot_params).await?.result.data,
         )?)
     }
+
+    pub async fn start_screencast(
+        &self,
+        start_screencast_params: StartScreencastParams,
+    ) -> Result<StartScreencastReturns> {
+        Ok(self.execute(start_screencast_params).await?.result)
+    }
+
+    pub async fn stop_screencast(
+        &self,
+        stop_screencast_params: StopScreencastParams,
+    ) -> Result<StopScreencastReturns> {
+        Ok(self.execute(stop_screencast_params).await?.result)
+    }
+
+    pub async fn screencast_frame_ack(
+        &self,
+        screencast_frame_ack_params: ScreencastFrameAckParams,
+    ) -> Result<ScreencastFrameAckReturns> {
+        Ok(self.execute(screencast_frame_ack_params).await?.result)
+    }
+
+    // pub fn start_screencast(
+    //     &self,
+    //     format: Option<Page::StartScreencastFormatOption>,
+    //     quality: Option<u32>,
+    //     max_width: Option<u32>,
+    //     max_height: Option<u32>,
+    //     every_nth_frame: Option<u32>,
+    // ) -> Result<()> {
+    //     self.call_method(Page::StartScreencast {
+    //         format,
+    //         quality,
+    //         max_width,
+    //         max_height,
+    //         every_nth_frame,
+    //     })?;
+    //     Ok(())
+    // }
+
+    // pub fn stop_screencast(&self) -> Result<()> {
+    //     self.call_method(Page::StopScreencast(None))?;
+    //     Ok(())
+    // }
+
+    // pub fn ack_screencast(&self, session_id: u32) -> Result<()> {
+    //     self.call_method(Page::ScreencastFrameAck { session_id })?;
+    //     Ok(())
+    // }
 
     /// Overrides the background color of the page, usefull when taking screenshots
     pub async fn set_background_color(

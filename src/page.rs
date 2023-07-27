@@ -24,6 +24,7 @@ use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 };
 use chromiumoxide_cdp::cdp::{browser_protocol, IntoEventKind};
 use chromiumoxide_types::*;
+use tracing::debug;
 
 use crate::element::Element;
 use crate::error::{CdpError, Result};
@@ -507,6 +508,42 @@ impl Page {
         let pdf = self.pdf(opts).await?;
         utils::write(output.as_ref(), &pdf).await?;
         Ok(pdf)
+    }
+
+    /// Screencast
+    pub async fn screencast(&self) -> Result<Vec<Vec<u8>>> {
+        let mut event_stream = self.event_listener::<EventScreencastFrame>().await?;
+        let page_inner = self.inner.clone();
+
+        let event_stream_handle = tokio::spawn(async move {
+            let mut images: Vec<Vec<u8>> = vec![];
+            let mut counter = 0;
+            while let Some(fack) = event_stream.next().await {
+                page_inner.screencast_frame_ack(ScreencastFrameAckParams {
+                    session_id: fack.session_id,
+                }); // Maybe dont await this shit because we dont need to wait on return
+                debug!("{:?}", fack.metadata);
+
+                images.push(utils::base64::decode(&fack.data).unwrap());
+
+                if counter > 1 {
+                    break;
+                }
+
+                counter += 1;
+            }
+            images
+        });
+
+        self.inner
+            .start_screencast(StartScreencastParams::builder().build())
+            .await?;
+
+        let result = event_stream_handle.await.unwrap();
+
+        self.inner.stop_screencast(StopScreencastParams {}).await?;
+
+        Ok(result)
     }
 
     /// Brings page to front (activates tab)
