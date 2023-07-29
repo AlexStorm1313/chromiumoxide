@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use futures::channel::mpsc::unbounded;
 use futures::channel::oneshot::channel as oneshot_channel;
-use futures::{stream, SinkExt, StreamExt};
+use futures::{stream, FutureExt, SinkExt, StreamExt};
 
 use chromiumoxide_cdp::cdp::browser_protocol::dom::*;
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
@@ -25,6 +25,8 @@ use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 use chromiumoxide_cdp::cdp::{browser_protocol, IntoEventKind};
 use chromiumoxide_types::*;
 use tokio::join;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tracing::debug;
 
 use crate::element::Element;
@@ -514,31 +516,43 @@ impl Page {
     /// Screencast
     pub async fn screencast(&self) -> Result<Vec<Vec<u8>>> {
         let mut event_stream = self.event_listener::<EventScreencastFrame>().await?;
-
         let page_inner = self.inner.clone();
+        let mut event_screencast_frames: Arc<Mutex<Vec<EventScreencastFrame>>> =
+            Arc::new(Mutex::new(vec![]));
+        let kk_zooi = event_screencast_frames.clone();
 
         let event_stream_handle = tokio::spawn(async move {
-            let mut event_screencast_frames: Vec<Arc<EventScreencastFrame>> = vec![];
-
             while let Some(event_screencast_frame) = event_stream.next().await {
-                page_inner.screencast_frame_ack(ScreencastFrameAckParams {
-                    session_id: event_screencast_frame.clone().session_id,
-                }); // Maybe dont await this shit because we dont need to wait on return
+                page_inner
+                    .screencast_frame_ack(ScreencastFrameAckParams {
+                        session_id: event_screencast_frame.session_id,
+                    })
+                    .await; // Maybe dont await this shit because we dont need to wait on return
 
-                event_screencast_frames.push(event_screencast_frame.clone());
+                kk_zooi
+                    .lock()
+                    .await
+                    .push(event_screencast_frame.as_ref().clone());
             }
 
-            event_screencast_frames
+            // event_screencast_frames
         });
 
         self.inner
             .start_screencast(StartScreencastParams::builder().build())
             .await?;
 
+        tokio::time::interval(tokio::time::Duration::from_secs(1));
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         self.inner.stop_screencast(StopScreencastParams {}).await?;
-        let result = event_stream_handle.await.unwrap();
 
-        debug!("{:?}", result);
+        event_stream_handle.abort();
+
+        for event_screencast_frame in event_screencast_frames.lock().await.clone().into_iter() {
+            debug!("{:?}", event_screencast_frame.metadata)
+        }
+
+        // debug!("---{:?}", event_screencast_frames.lock().await.len());
 
         // Ok(result)
         Ok(vec![vec![]])
