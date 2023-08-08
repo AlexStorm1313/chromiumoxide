@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -10,7 +11,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
     MediaFeature, SetDeviceMetricsOverrideParams, SetEmulatedMediaParams, SetTimezoneOverrideParams,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::network::{
-    Cookie, CookieParam, DeleteCookiesParams, GetCookiesParams, SetCookiesParams,
+    Cookie, CookieParam, DeleteCookiesParams, GetCookiesParams, Headers, SetCookiesParams,
     SetUserAgentOverrideParams,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::*;
@@ -20,10 +21,11 @@ use chromiumoxide_cdp::cdp::js_protocol;
 use chromiumoxide_cdp::cdp::js_protocol::debugger::GetScriptSourceParams;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
     AddBindingParams, CallArgument, CallFunctionOnParams, EvaluateParams, ExecutionContextId,
-    RemoteObjectType, ScriptId,
+    RemoteObject, RemoteObjectType, ScriptId,
 };
 use chromiumoxide_cdp::cdp::{browser_protocol, IntoEventKind};
 use chromiumoxide_types::*;
+use serde_json::json;
 
 use crate::element::Element;
 use crate::error::{CdpError, Result};
@@ -261,6 +263,32 @@ impl Page {
         Element::from_nodes(&self.inner, &node_ids).await
     }
 
+    /// Wait for selector or when the timer runs out
+    pub async fn wait_for_element(
+        &self,
+        selector: impl Into<String>,
+        duration: u64,
+    ) -> Result<Element> {
+        let selector = selector.into();
+        let page = self.clone();
+
+        match tokio::time::timeout(
+            tokio::time::Duration::from_millis(duration),
+            tokio::spawn(async move {
+                loop {
+                    if let Ok(element) = page.find_element(&selector).await {
+                        break (element);
+                    }
+                }
+            }),
+        )
+        .await
+        {
+            Ok(element) => Ok(element.unwrap()),
+            Err(error) => Err(CdpError::msg(error.to_string())),
+        }
+    }
+
     /// Returns the first element in the document which matches the given xpath
     /// selector.
     ///
@@ -276,6 +304,32 @@ impl Page {
         self.inner.get_document().await?;
         let node_ids = self.inner.find_xpaths(selector).await?;
         Element::from_nodes(&self.inner, &node_ids).await
+    }
+
+    /// Wait for selector or when the timer runs out
+    pub async fn wait_for_xpath(
+        &self,
+        selector: impl Into<String>,
+        duration: u64,
+    ) -> Result<Element> {
+        let selector = selector.into();
+        let page = self.clone();
+
+        match tokio::time::timeout(
+            tokio::time::Duration::from_millis(duration),
+            tokio::spawn(async move {
+                loop {
+                    if let Ok(element) = page.find_xpath(&selector).await {
+                        break (element);
+                    }
+                }
+            }),
+        )
+        .await
+        {
+            Ok(element) => Ok(element.unwrap()),
+            Err(error) => Err(CdpError::msg(error.to_string())),
+        }
     }
 
     /// Describes node given its id
@@ -628,6 +682,20 @@ impl Page {
         Ok(self)
     }
 
+    // Enable Network domain
+    pub async fn enable_network(&self) -> Result<&Self> {
+        self.execute(browser_protocol::network::EnableParams::default())
+            .await?;
+        Ok(self)
+    }
+
+    // Disable Network domain
+    pub async fn disable_network(&self) -> Result<&Self> {
+        self.execute(browser_protocol::network::DisableParams::default())
+            .await?;
+        Ok(self)
+    }
+
     /// Activates (focuses) the target.
     pub async fn activate(&self) -> Result<&Self> {
         self.inner.activate().await?;
@@ -758,6 +826,40 @@ impl Page {
             resp?;
         }
         Ok(self)
+    }
+
+    /// Set extra http headers send with each request comming from this page
+    pub async fn set_extra_http_headers(&self, headers: HashMap<&str, &str>) -> Result<&Self> {
+        self.enable_network()
+            .await?
+            .execute(browser_protocol::network::SetExtraHttpHeadersParams {
+                headers: Headers::new(json!(headers)),
+            })
+            .await?;
+
+        Ok(self)
+    }
+
+    pub async fn set_storage(&self, key: &str, value: &str) -> Result<(), CdpError> {
+        Ok(self
+            .evaluate(format!(r#"localStorage.setItem({key}, {value})"#))
+            .await?
+            .into_value()?)
+    }
+
+    pub async fn get_storage(&self, key: &str) -> Result<RemoteObject, CdpError> {
+        Ok(self
+            .evaluate(format!(r#"localStorage.getItem({key})"#))
+            .await?
+            .object()
+            .clone())
+    }
+
+    pub async fn remove_storage(&self, key: &str) -> Result<(), CdpError> {
+        Ok(self
+            .evaluate(format!(r#"localStorage.removeItem({key}"#))
+            .await?
+            .into_value()?)
     }
 
     /// Returns the title of the document.
@@ -986,7 +1088,7 @@ impl Page {
         Ok(self.execute(script.into()).await?.result.identifier)
     }
 
-    /// Set the content of the frame.
+    /// Set the content of the frame using native Devtools protocol.
     ///
     /// # Example
     /// ```no_run
@@ -1000,6 +1102,29 @@ impl Page {
     /// # }
     /// ```
     pub async fn set_content(&self, html: impl AsRef<str>) -> Result<&Self> {
+        self.execute(browser_protocol::page::SetDocumentContentParams {
+            frame_id: self.mainframe().await?.unwrap_or_default(),
+            html: html.as_ref().to_string(),
+        })
+        .await?;
+
+        Ok(&self)
+    }
+
+    /// Set the content of the frame using JavaScript.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use chromiumoxide::page::Page;
+    /// # use chromiumoxide::error::Result;
+    /// # async fn demo(page: Page) -> Result<()> {
+    ///     page.set_content("<body>
+    ///  <h1>This was set via chromiumoxide</h1>
+    ///  </body>").await?;
+    ///     # Ok(())
+    /// # }
+    /// ```
+    pub async fn set_content_js(&self, html: impl AsRef<str>) -> Result<&Self> {
         let mut call = CallFunctionOnParams::builder()
             .function_declaration(
                 "(html) => {
@@ -1027,8 +1152,23 @@ impl Page {
         self.wait_for_navigation().await
     }
 
-    /// Returns the HTML content of the page
-    pub async fn content(&self) -> Result<String> {
+    /// Returns the HTML content using native Devtools
+    pub async fn get_content(&self) -> Result<String> {
+        let document_node = self.get_document_node().await?;
+
+        Ok(self
+            .execute(browser_protocol::dom::GetOuterHtmlParams {
+                node_id: Some(document_node.node_id),
+                backend_node_id: Some(document_node.backend_node_id),
+                object_id: None,
+            })
+            .await?
+            .result
+            .outer_html)
+    }
+
+    /// Returns the HTML content of the page using JavaScript
+    pub async fn get_content_js(&self) -> Result<String> {
         Ok(self
             .evaluate(
                 "{
@@ -1056,6 +1196,119 @@ impl Page {
             .await?
             .result
             .script_source)
+    }
+
+    /// Enable all spoofing methods to present itself as a really real browser.
+    pub async fn enable_spoofing(&self) -> Result<&Self> {
+        self.spoof_chrome().await?;
+        self.spoof_permissions().await?;
+        self.spoof_plugins().await?;
+        self.spoof_mime_types().await?;
+        self.spoof_user_agent().await?;
+        self.spoof_webdriver().await?;
+        self.spoof_webgl().await?;
+
+        Ok(&self)
+    }
+
+    /// Spoof a generic user agent
+    pub async fn spoof_user_agent(&self) -> Result<&Self> {
+        match self
+            .evaluate("window.navigator.userAgent")
+            .await?
+            .value()
+            .map(|x| x.to_string())
+        {
+            Some(mut ua) => {
+                ua = ua.replace("HeadlessChrome/", "Chrome/");
+
+                let re = regex::Regex::new(r"\(([^)]+)\)").unwrap(); // Need to handle this error
+                ua = re.replace(&ua, "(Windows NT 10.0; Win64; x64)").to_string();
+
+                self.set_user_agent(&ua).await?;
+                Ok(&self)
+            }
+            None => Err(CdpError::msg("No user agent is set")),
+        }
+    }
+
+    /// Spoof Webdriver
+    pub async fn spoof_webdriver(&self) -> Result<&Self> {
+        self.evaluate_on_new_document(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});",
+        )
+        .await?;
+
+        Ok(&self)
+    }
+
+    /// Spoof chrome
+    pub async fn spoof_chrome(&self) -> Result<&Self> {
+        self.evaluate_on_new_document("window.chrome = { runtime: {} };")
+            .await?;
+
+        Ok(&self)
+    }
+
+    /// Spoof permissions
+    pub async fn spoof_permissions(&self) -> Result<&Self> {
+        self.evaluate_on_new_document(
+            "const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.__proto__.query = parameters =>
+        parameters.name === 'notifications'
+            ? Promise.resolve({state: Notification.permission})
+            : originalQuery(parameters);",
+        )
+        .await?;
+
+        Ok(&self)
+    }
+
+    /// Spoof plugins
+    pub async fn spoof_plugins(&self) -> Result<&Self> {
+        self.evaluate_on_new_document(
+            "Object.defineProperty(navigator, 'plugins', { get: () => [
+                {filename:'dox-pdf-viewer'},
+                {filename:'chewsday'},
+                {filename:'internal-nacl-plugin'},
+                {filename:'fuck-your-anti-bot'},
+              ], });",
+        )
+        .await?;
+
+        Ok(&self)
+    }
+
+    /// Spoof mimeTypes
+    pub async fn spoof_mime_types(&self) -> Result<&Self> {
+        self.evaluate_on_new_document(
+            "Object.defineProperty(navigator, 'mimeTypes', { get: () =>  [] });",
+        )
+        .await?;
+
+        Ok(&self)
+    }
+
+    /// Spoof WebGL
+    pub async fn spoof_webgl(&self) -> Result<&Self> {
+        self.evaluate_on_new_document(
+            "const getParameter = WebGLRenderingContext.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+            // UNMASKED_VENDOR_WEBGL
+            if (parameter === 37445) {
+                return 'Google Inc. (NVIDIA)';
+            }
+            // UNMASKED_RENDERER_WEBGL
+            if (parameter === 37446) {
+                return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.5671)';
+            }
+
+            return getParameter(parameter);
+        };",
+        )
+        .await?;
+
+        Ok(&self)
     }
 }
 
