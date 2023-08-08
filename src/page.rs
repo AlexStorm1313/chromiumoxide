@@ -1,4 +1,3 @@
-use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -27,7 +26,6 @@ use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 use chromiumoxide_cdp::cdp::{browser_protocol, IntoEventKind};
 use chromiumoxide_types::*;
 use serde_json::json;
-use tracing::debug;
 
 use crate::element::Element;
 use crate::error::{CdpError, Result};
