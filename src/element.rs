@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use chromiumoxide_cdp::cdp::browser_protocol;
 use futures::{future, Future, FutureExt, Stream};
 
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
@@ -204,8 +205,21 @@ impl Element {
         element_json.result.value.ok_or(CdpError::NotFound)
     }
 
-    /// Calls [focus](https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/focus) on the element.
+    /// Focus element using Devtools native functions
     pub async fn focus(&self) -> Result<&Self> {
+        self.tab
+            .execute(browser_protocol::dom::FocusParams {
+                node_id: Some(self.node_id),
+                backend_node_id: Some(self.backend_node_id),
+                object_id: Some(self.remote_object_id.clone()),
+            })
+            .await?;
+
+        Ok(&self)
+    }
+
+    /// Calls [focus](https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/focus) on the element via JavaScript.
+    pub async fn focus_js(&self) -> Result<&Self> {
         self.call_js_fn("function() { this.focus(); }", true)
             .await?;
         Ok(self)
@@ -425,6 +439,31 @@ impl Element {
             .collect())
     }
 
+    /// Get the HTML content of the element
+    pub async fn get_content(&self) -> Result<String> {
+        Ok(self
+            .tab
+            .execute(browser_protocol::dom::GetOuterHtmlParams {
+                node_id: Some(self.node_id),
+                backend_node_id: Some(self.backend_node_id),
+                object_id: Some(self.remote_object_id.clone()),
+            })
+            .await?
+            .result
+            .outer_html)
+    }
+
+    /// Overwrite the current content of the element with the supplied HTML
+    pub async fn set_content(&self, html: impl AsRef<str>) -> Result<&Self> {
+        self.tab
+            .execute(browser_protocol::dom::SetOuterHtmlParams {
+                node_id: self.node_id,
+                outer_html: html.as_ref().to_string(),
+            })
+            .await?;
+
+        Ok(&self)
+    }
     /// Takes a screenshot of the selected Element
     ///
     /// Instead of scrolling the element into the Viewport resize the device
