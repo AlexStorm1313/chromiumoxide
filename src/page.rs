@@ -1167,6 +1167,7 @@ impl Page {
         self.spoof_chrome().await?;
         self.spoof_permissions().await?;
         self.spoof_plugins().await?;
+        self.spoof_mime_types().await?;
         self.spoof_user_agent().await?;
         self.spoof_webdriver().await?;
         self.spoof_webgl().await?;
@@ -1236,6 +1237,16 @@ impl Page {
                 {filename:'internal-nacl-plugin'},
                 {filename:'fuck-your-anti-bot'},
               ], });",
+        )
+        .await?;
+
+        Ok(&self)
+    }
+
+    /// Spoof mimeTypes
+    pub async fn spoof_mime_types(&self) -> Result<&Self> {
+        self.evaluate_on_new_document(
+            "Object.defineProperty(navigator, 'mimeTypes', { get: () =>  [] });",
         )
         .await?;
 
