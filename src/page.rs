@@ -1090,7 +1090,7 @@ impl Page {
         Ok(self.execute(script.into()).await?.result.identifier)
     }
 
-    /// Set the content of the frame.
+    /// Set the content of the frame using native Devtools protocol.
     ///
     /// # Example
     /// ```no_run
@@ -1104,6 +1104,29 @@ impl Page {
     /// # }
     /// ```
     pub async fn set_content(&self, html: impl AsRef<str>) -> Result<&Self> {
+        self.execute(browser_protocol::page::SetDocumentContentParams {
+            frame_id: self.mainframe().await?.unwrap_or_default(),
+            html: html.as_ref().to_string(),
+        })
+        .await?;
+
+        Ok(&self)
+    }
+
+    /// Set the content of the frame using JavaScript.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use chromiumoxide::page::Page;
+    /// # use chromiumoxide::error::Result;
+    /// # async fn demo(page: Page) -> Result<()> {
+    ///     page.set_content("<body>
+    ///  <h1>This was set via chromiumoxide</h1>
+    ///  </body>").await?;
+    ///     # Ok(())
+    /// # }
+    /// ```
+    pub async fn set_content_js(&self, html: impl AsRef<str>) -> Result<&Self> {
         let mut call = CallFunctionOnParams::builder()
             .function_declaration(
                 "(html) => {
@@ -1131,8 +1154,23 @@ impl Page {
         self.wait_for_navigation().await
     }
 
-    /// Returns the HTML content of the page
-    pub async fn content(&self) -> Result<String> {
+    /// Returns the HTML content using native Devtools
+    pub async fn get_content(&self) -> Result<String> {
+        let document_node = self.get_document_node().await?;
+
+        Ok(self
+            .execute(browser_protocol::dom::GetOuterHtmlParams {
+                node_id: Some(document_node.node_id),
+                backend_node_id: Some(document_node.backend_node_id),
+                object_id: None,
+            })
+            .await?
+            .result
+            .outer_html)
+    }
+
+    /// Returns the HTML content of the page using JavaScript
+    pub async fn get_content_js(&self) -> Result<String> {
         Ok(self
             .evaluate(
                 "{
