@@ -1,3 +1,4 @@
+use std::borrow::{Borrow, BorrowMut};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -17,16 +18,17 @@ use chromiumoxide_cdp::cdp::browser_protocol::network::{
 use chromiumoxide_cdp::cdp::browser_protocol::page::*;
 use chromiumoxide_cdp::cdp::browser_protocol::performance::{GetMetricsParams, Metric};
 use chromiumoxide_cdp::cdp::browser_protocol::target::{SessionId, TargetId};
-use chromiumoxide_cdp::cdp::js_protocol;
 use chromiumoxide_cdp::cdp::js_protocol::debugger::GetScriptSourceParams;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
     AddBindingParams, CallArgument, CallFunctionOnParams, EvaluateParams, ExecutionContextId,
     RemoteObject, RemoteObjectType, ScriptId,
 };
 use chromiumoxide_cdp::cdp::{browser_protocol, IntoEventKind};
+use chromiumoxide_cdp::cdp::{de, js_protocol};
 use chromiumoxide_types::*;
 use serde_json::json;
 use tokio::join;
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::debug;
@@ -569,46 +571,50 @@ impl Page {
 
     /// Screencast
     pub async fn screencast(&self) -> Result<Vec<Vec<u8>>> {
-        let mut event_stream = self.event_listener::<EventScreencastFrame>().await?;
-        let page_inner = self.inner.clone();
-        let mut event_screencast_frames: Arc<Mutex<Vec<EventScreencastFrame>>> =
-            Arc::new(Mutex::new(vec![]));
-        let kk_zooi = event_screencast_frames.clone();
+        let page = self.clone();
 
-        let event_stream_handle = tokio::spawn(async move {
-            while let Some(event_screencast_frame) = event_stream.next().await {
-                page_inner
+        let vec: Arc<Mutex<Vec<EventScreencastFrame>>> = Arc::new(Mutex::new(vec![]));
+
+        let cloned_vec = Arc::clone(&vec);
+
+        let event_stream_abort_handle = tokio::spawn(async move {
+            while let Some(event_screencast_frame) = page
+                .event_listener::<EventScreencastFrame>()
+                .await
+                .unwrap()
+                .next()
+                .await
+            {
+                let _ = page
+                    .inner
                     .screencast_frame_ack(ScreencastFrameAckParams {
                         session_id: event_screencast_frame.session_id,
                     })
-                    .await; // Maybe dont await this shit because we dont need to wait on return
+                    .await;
 
-                kk_zooi
+                // debug!("{:?}", event_screencast_frame.metadata);
+
+                cloned_vec
                     .lock()
                     .await
                     .push(event_screencast_frame.as_ref().clone());
             }
-
-            // event_screencast_frames
-        });
+        })
+        .abort_handle();
 
         self.inner
-            .start_screencast(StartScreencastParams::builder().build())
+            .start_screencast(StartScreencastParams::default())
             .await?;
 
-        tokio::time::interval(tokio::time::Duration::from_secs(1));
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+
         self.inner.stop_screencast(StopScreencastParams {}).await?;
+        event_stream_abort_handle.abort();
 
-        event_stream_handle.abort();
-
-        for event_screencast_frame in event_screencast_frames.lock().await.clone().into_iter() {
-            debug!("{:?}", event_screencast_frame.metadata)
+        for v in vec.lock().await.iter() {
+            debug!("{:?}", v.metadata);
         }
 
-        // debug!("---{:?}", event_screencast_frames.lock().await.len());
-
-        // Ok(result)
         Ok(vec![vec![]])
     }
 
