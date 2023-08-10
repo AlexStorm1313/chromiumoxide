@@ -1,10 +1,11 @@
+use std::borrow::{Borrow, BorrowMut};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use futures::channel::mpsc::unbounded;
 use futures::channel::oneshot::channel as oneshot_channel;
-use futures::{stream, SinkExt, StreamExt};
+use futures::{stream, FutureExt, SinkExt, StreamExt};
 
 use chromiumoxide_cdp::cdp::browser_protocol::dom::*;
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
@@ -17,15 +18,20 @@ use chromiumoxide_cdp::cdp::browser_protocol::network::{
 use chromiumoxide_cdp::cdp::browser_protocol::page::*;
 use chromiumoxide_cdp::cdp::browser_protocol::performance::{GetMetricsParams, Metric};
 use chromiumoxide_cdp::cdp::browser_protocol::target::{SessionId, TargetId};
-use chromiumoxide_cdp::cdp::js_protocol;
 use chromiumoxide_cdp::cdp::js_protocol::debugger::GetScriptSourceParams;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
     AddBindingParams, CallArgument, CallFunctionOnParams, EvaluateParams, ExecutionContextId,
     RemoteObject, RemoteObjectType, ScriptId,
 };
 use chromiumoxide_cdp::cdp::{browser_protocol, IntoEventKind};
+use chromiumoxide_cdp::cdp::{de, js_protocol};
 use chromiumoxide_types::*;
 use serde_json::json;
+use tokio::join;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tracing::debug;
 
 use crate::element::Element;
 use crate::error::{CdpError, Result};
@@ -561,6 +567,71 @@ impl Page {
         let pdf = self.pdf(opts).await?;
         utils::write(output.as_ref(), &pdf).await?;
         Ok(pdf)
+    }
+
+    /// Screencast
+    pub async fn screencast(&self) -> Result<Vec<Vec<u8>>> {
+        let page = self.clone();
+
+        let event_screencast_frames: Arc<Mutex<Vec<EventScreencastFrame>>> =
+            Arc::new(Mutex::new(vec![]));
+        let cloned_event_screencast_frames = Arc::clone(&event_screencast_frames);
+
+        let event_stream_abort_handle = tokio::spawn(async move {
+            while let Some(event_screencast_frame) = page
+                .event_listener::<EventScreencastFrame>()
+                .await
+                .unwrap()
+                .next()
+                .await
+            {
+                let _ = page
+                    .inner
+                    .screencast_frame_ack(ScreencastFrameAckParams {
+                        session_id: event_screencast_frame.session_id,
+                    })
+                    .await;
+
+                // debug!("{:?}", event_screencast_frame.metadata);
+
+                cloned_event_screencast_frames
+                    .lock()
+                    .await
+                    .push(event_screencast_frame.as_ref().clone());
+            }
+        })
+        .abort_handle();
+
+        self.inner
+            .start_screencast(StartScreencastParams::default())
+            .await?;
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+
+        self.inner.stop_screencast(StopScreencastParams {}).await?;
+        event_stream_abort_handle.abort();
+
+        let interpolated_frames = event_screencast_frames
+            .lock()
+            .await
+            .clone()
+            .into_iter()
+            .fold(Vec::<EventScreencastFrame>::new(), |mut acc, frame| {
+                // let prev = acc.last().unwrap();
+                debug!("{:?}", acc.len());
+                debug!("{:?}", frame.metadata.timestamp);
+
+                // debug!(
+                //     "{:?}",
+                //     prev.clone().metadata.timestamp.unwrap().inner()
+                //         - frame.metadata.timestamp.unwrap().inner()
+                // );
+
+                // acc.push(AsRef::<[u8]>::as_ref(&frame.data).to_vec());
+                acc
+            });
+
+        Ok(vec![])
     }
 
     /// Brings page to front (activates tab)

@@ -22,6 +22,8 @@ use chromiumoxide_cdp::cdp::browser_protocol::input::{
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::{
     CaptureScreenshotParams, GetLayoutMetricsParams, GetLayoutMetricsReturns,
+    ScreencastFrameAckParams, ScreencastFrameAckReturns, StartScreencastParams,
+    StartScreencastReturns, StopScreencastParams, StopScreencastReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::target::{ActivateTargetParams, SessionId, TargetId};
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
@@ -387,6 +389,27 @@ impl PageInner {
         Ok(utils::base64::decode(
             &self.execute(capture_screenshot_params).await?.result.data,
         )?)
+    }
+
+    pub async fn start_screencast(
+        &self,
+        start_screencast_params: StartScreencastParams,
+    ) -> Result<StartScreencastReturns> {
+        Ok(self.execute(start_screencast_params).await?.result)
+    }
+
+    pub async fn stop_screencast(
+        &self,
+        stop_screencast_params: StopScreencastParams,
+    ) -> Result<StopScreencastReturns> {
+        Ok(self.execute(stop_screencast_params).await?.result)
+    }
+
+    pub async fn screencast_frame_ack(
+        &self,
+        screencast_frame_ack_params: ScreencastFrameAckParams,
+    ) -> Result<ScreencastFrameAckReturns> {
+        Ok(self.execute(screencast_frame_ack_params).await?.result)
     }
 
     /// Overrides the background color of the page, usefull when taking screenshots
