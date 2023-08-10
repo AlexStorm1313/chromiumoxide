@@ -573,9 +573,9 @@ impl Page {
     pub async fn screencast(&self) -> Result<Vec<Vec<u8>>> {
         let page = self.clone();
 
-        let vec: Arc<Mutex<Vec<EventScreencastFrame>>> = Arc::new(Mutex::new(vec![]));
-
-        let cloned_vec = Arc::clone(&vec);
+        let event_screencast_frames: Arc<Mutex<Vec<EventScreencastFrame>>> =
+            Arc::new(Mutex::new(vec![]));
+        let cloned_event_screencast_frames = Arc::clone(&event_screencast_frames);
 
         let event_stream_abort_handle = tokio::spawn(async move {
             while let Some(event_screencast_frame) = page
@@ -594,7 +594,7 @@ impl Page {
 
                 // debug!("{:?}", event_screencast_frame.metadata);
 
-                cloned_vec
+                cloned_event_screencast_frames
                     .lock()
                     .await
                     .push(event_screencast_frame.as_ref().clone());
@@ -611,11 +611,27 @@ impl Page {
         self.inner.stop_screencast(StopScreencastParams {}).await?;
         event_stream_abort_handle.abort();
 
-        for v in vec.lock().await.iter() {
-            debug!("{:?}", v.metadata);
-        }
+        let interpolated_frames = event_screencast_frames
+            .lock()
+            .await
+            .clone()
+            .into_iter()
+            .fold(Vec::<EventScreencastFrame>::new(), |mut acc, frame| {
+                // let prev = acc.last().unwrap();
+                debug!("{:?}", acc.len());
+                debug!("{:?}", frame.metadata.timestamp);
 
-        Ok(vec![vec![]])
+                // debug!(
+                //     "{:?}",
+                //     prev.clone().metadata.timestamp.unwrap().inner()
+                //         - frame.metadata.timestamp.unwrap().inner()
+                // );
+
+                // acc.push(AsRef::<[u8]>::as_ref(&frame.data).to_vec());
+                acc
+            });
+
+        Ok(vec![])
     }
 
     /// Brings page to front (activates tab)
