@@ -172,6 +172,21 @@ impl Page {
         Ok(self)
     }
 
+    pub async fn wait_for_lifecycle_event(&self, event_name: &str) -> Result<&Self> {
+        while let Some(event) = self
+            .event_listener::<EventLifecycleEvent>()
+            .await?
+            .next()
+            .await
+        {
+            if event.name == event_name {
+                break;
+            }
+        }
+
+        Ok(self)
+    }
+
     /// Navigate directly to the given URL.
     ///
     /// This resolves directly after the requested URL is fully loaded.
