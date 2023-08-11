@@ -6,7 +6,6 @@ use futures::channel::mpsc::unbounded;
 use futures::channel::oneshot::channel as oneshot_channel;
 use futures::{stream, SinkExt, StreamExt};
 
-use chromiumoxide_cdp::cdp::browser_protocol::dom::*;
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
     MediaFeature, SetDeviceMetricsOverrideParams, SetEmulatedMediaParams, SetTimezoneOverrideParams,
 };
@@ -17,6 +16,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::network::{
 use chromiumoxide_cdp::cdp::browser_protocol::page::*;
 use chromiumoxide_cdp::cdp::browser_protocol::performance::{GetMetricsParams, Metric};
 use chromiumoxide_cdp::cdp::browser_protocol::target::{SessionId, TargetId};
+use chromiumoxide_cdp::cdp::browser_protocol::{css, dom::*};
 use chromiumoxide_cdp::cdp::js_protocol;
 use chromiumoxide_cdp::cdp::js_protocol::debugger::GetScriptSourceParams;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
@@ -26,6 +26,7 @@ use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 use chromiumoxide_cdp::cdp::{browser_protocol, IntoEventKind};
 use chromiumoxide_types::*;
 use serde_json::json;
+use tracing::debug;
 
 use crate::element::Element;
 use crate::error::{CdpError, Result};
@@ -904,6 +905,11 @@ impl Page {
         self.inner.layout_metrics().await
     }
 
+    /// Returns FrameTree
+    pub async fn get_frame_tree(&self) -> Result<GetFrameTreeReturns> {
+        self.inner.frame_tree().await
+    }
+
     /// This evaluates strictly as expression.
     ///
     /// Same as `Page::evaluate` but no fallback or any attempts to detect
@@ -1200,6 +1206,34 @@ impl Page {
             )
             .await?
             .into_value()?)
+    }
+
+    /// Inject Css stylesheet via the DevConsole
+    pub async fn set_stylesheet(&self, payload: &str) -> Result<&Self> {
+        // Enable Debugger params to create Devtools stylesheet
+        self.get_document_node().await?;
+        self.enable_dom().await?;
+        self.enable_css().await?;
+
+        self.execute(css::AddRuleParams {
+            style_sheet_id: self
+                .execute(css::CreateStyleSheetParams {
+                    frame_id: self.get_frame_tree().await?.frame_tree.frame.id,
+                })
+                .await?
+                .result
+                .style_sheet_id,
+            location: css::SourceRange {
+                start_line: 0,
+                start_column: 0,
+                end_line: 0,
+                end_column: 0,
+            },
+            rule_text: payload.to_string(),
+        })
+        .await?;
+
+        Ok(self)
     }
 
     /// Returns source for the script with given id.

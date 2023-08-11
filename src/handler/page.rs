@@ -21,7 +21,8 @@ use chromiumoxide_cdp::cdp::browser_protocol::input::{
     MouseButton,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::{
-    CaptureScreenshotParams, GetLayoutMetricsParams, GetLayoutMetricsReturns,
+    CaptureScreenshotParams, GetFrameTreeParams, GetFrameTreeReturns, GetLayoutMetricsParams,
+    GetLayoutMetricsReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::target::{ActivateTargetParams, SessionId, TargetId};
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
@@ -369,6 +370,11 @@ impl PageInner {
             .execute(GetLayoutMetricsParams::default())
             .await?
             .result)
+    }
+
+    /// Returns metrics relating to the layout of the page
+    pub async fn frame_tree(&self) -> Result<GetFrameTreeReturns> {
+        Ok(self.execute(GetFrameTreeParams::default()).await?.result)
     }
 
     /// Returns the root DOM node (and optionally the subtree) of the page.
