@@ -2,6 +2,7 @@ use std::borrow::{Borrow, BorrowMut};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures::channel::mpsc::unbounded;
 use futures::channel::oneshot::channel as oneshot_channel;
@@ -607,29 +608,65 @@ impl Page {
             .await?;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+        let end_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
 
         self.inner.stop_screencast(StopScreencastParams {}).await?;
         event_stream_abort_handle.abort();
 
-        let interpolated_frames = event_screencast_frames
+        let mut interpolated_frames = event_screencast_frames
             .lock()
             .await
             .clone()
             .into_iter()
-            .fold(Vec::<EventScreencastFrame>::new(), |mut acc, frame| {
-                // let prev = acc.last().unwrap();
-                debug!("{:?}", acc.len());
-                debug!("{:?}", frame.metadata.timestamp);
+            .fold(
+                (Vec::<EventScreencastFrame>::new(), Vec::<Vec<u8>>::new()),
+                |(mut acc, mut frames), frame| {
+                    debug!("{:?}", acc.len());
+                    debug!("{:?}", frame.metadata.timestamp);
 
-                // debug!(
-                //     "{:?}",
-                //     prev.clone().metadata.timestamp.unwrap().inner()
-                //         - frame.metadata.timestamp.unwrap().inner()
-                // );
+                    if let Some(prev) = acc.last() {
+                        let duration = frame.clone().metadata.timestamp.unwrap().inner()
+                            - prev.clone().metadata.timestamp.unwrap().inner();
+                        debug!("{:?}", duration);
 
-                // acc.push(AsRef::<[u8]>::as_ref(&frame.data).to_vec());
-                acc
-            });
+                        let dupe_frames = (duration * 25.);
+                        debug!("dubed frames{:?}", dupe_frames);
+                        for _ in 0..=dupe_frames as i32 {
+                            frames.push(AsRef::<[u8]>::as_ref(&frame.data).to_vec());
+                        }
+                    }
+                    acc.push(frame);
+
+                    (acc, frames)
+                },
+            );
+
+        let ehak = (interpolated_frames
+            .0
+            .last()
+            .unwrap()
+            .metadata
+            .timestamp
+            .clone()
+            .unwrap()
+            .inner()
+            * 1000.) as u128;
+
+        let dupe_frames = ((end_time - ehak) / 1000) * 25;
+        debug!("dubbbb frames {:?} ", dupe_frames);
+        for _ in 0..=dupe_frames {
+            interpolated_frames.1.push(
+                AsRef::<[u8]>::as_ref(&interpolated_frames.1.last().unwrap().clone()).to_vec(),
+            );
+        }
+
+        debug!(
+            "--------------------------{:?}",
+            interpolated_frames.1.len()
+        );
 
         Ok(vec![])
     }
