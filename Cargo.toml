@@ -44,6 +44,7 @@ pin-project-lite = "0.2"
 dunce = "1"
 regex = "1.9.3"
 
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.51"
 
@@ -94,10 +95,10 @@ required-features = ["_fetcher-native-async-std"]
 name = "fetcher-tokio"
 required-features = ["tokio-runtime", "_fetcher-native-tokio"]
 
-[workspace]
-members = [
-    "chromiumoxide_pdl",
-    "chromiumoxide_types",
-    "chromiumoxide_cdp",
-    "chromiumoxide_fetcher",
-]
+# [workspace]
+# members = [
+#     "chromiumoxide_pdl",
+#     "chromiumoxide_types",
+#     "chromiumoxide_cdp",
+#     "chromiumoxide_fetcher",
+# ]
