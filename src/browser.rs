@@ -9,6 +9,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::browser::{
 };
 use chromiumoxide_cdp::cdp::browser_protocol::target::{
 	CreateBrowserContextParams, CreateTargetParams, DisposeBrowserContextParams, TargetId,
+	TargetInfo,
 };
 use chromiumoxide_cdp::cdp::{CdpEventMessage, IntoEventKind};
 use chromiumoxide_types::*;
@@ -48,33 +49,82 @@ pub struct Browser {
 	browser_context: BrowserContext,
 }
 
+/// Browser connection information.
+#[derive(serde::Deserialize, Debug, Default)]
+pub struct BrowserConnection {
+	#[serde(rename = "Browser")]
+	/// The browser name
+	pub browser: String,
+	#[serde(rename = "Protocol-Version")]
+	/// Browser version
+	pub protocol_version: String,
+	#[serde(rename = "User-Agent")]
+	/// User Agent used by default.
+	pub user_agent: String,
+	#[serde(rename = "V8-Version")]
+	/// The v8 engine version
+	pub v8_version: String,
+	#[serde(rename = "WebKit-Version")]
+	/// Webkit version
+	pub webkit_version: String,
+	#[serde(rename = "webSocketDebuggerUrl")]
+	/// Remote debugging address
+	pub web_socket_debugger_url: String,
+}
+
 impl Browser {
-	/// Connect to an already running chromium instance via websocket
-	pub async fn connect(debug_ws_url: impl Into<String>) -> Result<(Self, Handler)> {
-		let debug_ws_url = debug_ws_url.into();
-		let conn = Connection::<CdpEventMessage>::connect(&debug_ws_url).await?;
-
-		let (tx, rx) = channel(1);
-
-		let fut = Handler::new(conn, rx, HandlerConfig::default());
-		let browser_context = fut.default_browser_context().clone();
-
-		let browser = Self {
-			sender: tx,
-			config: None,
-			child: None,
-			debug_ws_url,
-			browser_context,
-		};
-		Ok((browser, fut))
+	/// Connect to an already running chromium instance via the given URL.
+	///
+	/// If the URL is a http(s) URL, it will first attempt to retrieve the Websocket URL from the `json/version` endpoint.
+	pub async fn connect(url: impl Into<String>) -> Result<(Self, Handler)> {
+		Self::connect_with_config(url, HandlerConfig::default()).await
 	}
 
-	// Connect to an already running chromium instance via websocket with HandlerConfig
+	// Connect to an already running chromium instance with a given `HandlerConfig`.
+	///
+	/// If the URL is a http URL, it will first attempt to retrieve the Websocket URL from the `json/version` endpoint.
 	pub async fn connect_with_config(
-		debug_ws_url: impl Into<String>,
+		url: impl Into<String>,
 		config: HandlerConfig,
 	) -> Result<(Self, Handler)> {
-		let debug_ws_url = debug_ws_url.into();
+		let mut debug_ws_url = url.into();
+
+		if debug_ws_url.starts_with("http") {
+			match reqwest::Client::new()
+				.get(
+					if debug_ws_url.ends_with("/json/version")
+						|| debug_ws_url.ends_with("/json/version/")
+					{
+						debug_ws_url.clone()
+					} else {
+						format!(
+							"{}{}json/version",
+							&debug_ws_url,
+							if debug_ws_url.ends_with('/') { "" } else { "/" }
+						)
+					},
+				)
+				.header("content-type", "application/json")
+				.send()
+				.await
+			{
+				Ok(req) => {
+					let socketaddr = req.remote_addr().unwrap();
+					let connection: BrowserConnection =
+						serde_json::from_slice(&req.bytes().await.unwrap_or_default())
+							.unwrap_or_default();
+
+					if !connection.web_socket_debugger_url.is_empty() {
+						// prevent proxy interfaces from returning local ips to connect to the exact machine
+						debug_ws_url = connection
+							.web_socket_debugger_url
+							.replace("127.0.0.1", &socketaddr.ip().to_string());
+					}
+				}
+				Err(_) => return Err(CdpError::NoResponse),
+			}
+		}
+
 		let conn = Connection::<CdpEventMessage>::connect(&debug_ws_url).await?;
 
 		let (tx, rx) = channel(1);
@@ -172,6 +222,26 @@ impl Browser {
 		};
 
 		Ok((browser, fut))
+	}
+
+	/// Request to fetch all existing browser targets.
+	///
+	/// By default, only targets launched after the browser connection are tracked
+	/// when connecting to a existing browser instance with the devtools websocket url
+	/// This function fetches existing targets on the browser and adds them as pages internally
+	///
+	/// The pages are not guaranteed to be ready as soon as the function returns
+	/// You should wait a few millis if you need to use a page
+	/// Returns [TargetInfo]
+	pub async fn fetch_targets(&mut self) -> Result<Vec<TargetInfo>> {
+		let (tx, rx) = oneshot_channel();
+
+		self.sender
+			.clone()
+			.send(HandlerMessage::FetchTargets(tx))
+			.await?;
+
+		rx.await?
 	}
 
 	/// Request for the browser to close completely.
@@ -315,7 +385,6 @@ impl Browser {
 
 	/// Create a new browser page
 	pub async fn new_page(&self, params: impl Into<CreateTargetParams>) -> Result<Page> {
-		debug!("USING LOCAL PACKAGAGAGAGAGAGAGAGA");
 		let (tx, rx) = oneshot_channel();
 		let mut params = params.into();
 		if let Some(id) = self.browser_context.id() {
