@@ -1044,6 +1044,7 @@ impl Page {
 		Ok(self)
 	}
 
+	/// Set localStorage item on this page
 	pub async fn set_local_storage(&self, key: &str, value: &str) -> Result<&Self> {
 		self.evaluate(format!(r#"localStorage.setItem("{key}", "{value}")"#))
 			.await?;
@@ -1051,6 +1052,7 @@ impl Page {
 		Ok(self)
 	}
 
+	/// Get localStorage item on this page
 	pub async fn get_local_storage(&self, key: &str) -> Result<&Self> {
 		self.evaluate(format!(r#"localStorage.getItem("{key}")"#))
 			.await?;
@@ -1058,6 +1060,7 @@ impl Page {
 		Ok(self)
 	}
 
+	/// Remove localStorage item on this page
 	pub async fn remove_local_storage(&self, key: &str) -> Result<&Self> {
 		self.evaluate(format!(r#"localStorage.removeItem("{key}")"#))
 			.await?;
@@ -1065,12 +1068,14 @@ impl Page {
 		Ok(self)
 	}
 
+	/// Clear localStorage item on this page
 	pub async fn clear_local_storage(&self) -> Result<&Self> {
 		self.evaluate(format!(r#"localStorage.clear()"#)).await?;
 
 		Ok(self)
 	}
 
+	/// Set sessionStorage item on this page
 	pub async fn set_session_storage(&self, key: &str, value: &str) -> Result<&Self> {
 		self.evaluate(format!(r#"sessionStorage.setItem("{key}", "{value}")"#))
 			.await?;
@@ -1078,6 +1083,7 @@ impl Page {
 		Ok(self)
 	}
 
+	/// Get sessionStorage item on this page
 	pub async fn get_session_storage(&self, key: &str) -> Result<&Self> {
 		self.evaluate(format!(r#"sessionStorage.getItem("{key}")"#))
 			.await?;
@@ -1085,6 +1091,7 @@ impl Page {
 		Ok(self)
 	}
 
+	/// Remove sessionStorage item on this page
 	pub async fn remove_session_storage(&self, key: &str) -> Result<&Self> {
 		self.evaluate(format!(r#"sessionStorage.removeItem("{key}")"#))
 			.await?;
@@ -1092,6 +1099,7 @@ impl Page {
 		Ok(self)
 	}
 
+	/// Clear sessionStorage item on this page
 	pub async fn clear_session_storage(&self) -> Result<&Self> {
 		self.evaluate(format!(r#"sessionStorage.clear()"#)).await?;
 
