@@ -1044,26 +1044,58 @@ impl Page {
 		Ok(self)
 	}
 
-	pub async fn set_storage(&self, key: &str, value: &str) -> Result<(), CdpError> {
-		Ok(self
-			.evaluate(format!(r#"localStorage.setItem({key}, {value})"#))
-			.await?
-			.into_value()?)
+	pub async fn set_local_storage(&self, key: &str, value: &str) -> Result<&Self> {
+		self.evaluate(format!(r#"localStorage.setItem("{key}", "{value}")"#))
+			.await?;
+
+		Ok(self)
 	}
 
-	pub async fn get_storage(&self, key: &str) -> Result<RemoteObject, CdpError> {
-		Ok(self
-			.evaluate(format!(r#"localStorage.getItem({key})"#))
-			.await?
-			.object()
-			.clone())
+	pub async fn get_local_storage(&self, key: &str) -> Result<&Self> {
+		self.evaluate(format!(r#"localStorage.getItem("{key}")"#))
+			.await?;
+
+		Ok(self)
 	}
 
-	pub async fn remove_storage(&self, key: &str) -> Result<(), CdpError> {
-		Ok(self
-			.evaluate(format!(r#"localStorage.removeItem({key}"#))
-			.await?
-			.into_value()?)
+	pub async fn remove_local_storage(&self, key: &str) -> Result<&Self> {
+		self.evaluate(format!(r#"localStorage.removeItem("{key}")"#))
+			.await?;
+
+		Ok(self)
+	}
+
+	pub async fn clear_local_storage(&self) -> Result<&Self> {
+		self.evaluate(format!(r#"localStorage.clear()"#)).await?;
+
+		Ok(self)
+	}
+
+	pub async fn set_session_storage(&self, key: &str, value: &str) -> Result<&Self> {
+		self.evaluate(format!(r#"sessionStorage.setItem("{key}", "{value}")"#))
+			.await?;
+
+		Ok(self)
+	}
+
+	pub async fn get_session_storage(&self, key: &str) -> Result<&Self> {
+		self.evaluate(format!(r#"sessionStorage.getItem("{key}")"#))
+			.await?;
+
+		Ok(self)
+	}
+
+	pub async fn remove_session_storage(&self, key: &str) -> Result<&Self> {
+		self.evaluate(format!(r#"sessionStorage.removeItem("{key}")"#))
+			.await?;
+
+		Ok(self)
+	}
+
+	pub async fn clear_session_storage(&self) -> Result<&Self> {
+		self.evaluate(format!(r#"sessionStorage.clear()"#)).await?;
+
+		Ok(self)
 	}
 
 	/// Returns the title of the document.
