@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use chromiumoxide_cdp::cdp::browser_protocol::css;
 use chromiumoxide_cdp::cdp::browser_protocol::dom::*;
@@ -26,6 +27,7 @@ use futures::channel::mpsc::unbounded;
 use futures::channel::oneshot::channel as oneshot_channel;
 use futures::{stream, SinkExt, StreamExt};
 use serde_json::json;
+use tokio::sync::Mutex;
 use tracing::debug;
 
 use crate::element::Element;
@@ -747,6 +749,106 @@ impl Page {
 		let pdf = self.pdf(opts).await?;
 		utils::write(output.as_ref(), &pdf).await?;
 		Ok(pdf)
+	}
+
+	/// Screencast
+	pub async fn screencast(&self) -> Result<Vec<Vec<u8>>> {
+		let page = self.clone();
+
+		let event_screencast_frames: Arc<Mutex<Vec<EventScreencastFrame>>> =
+			Arc::new(Mutex::new(vec![]));
+		let cloned_event_screencast_frames = Arc::clone(&event_screencast_frames);
+
+		let event_stream_abort_handle = tokio::spawn(async move {
+			while let Some(event_screencast_frame) = page
+				.event_listener::<EventScreencastFrame>()
+				.await
+				.unwrap()
+				.next()
+				.await
+			{
+				let _ = page
+					.inner
+					.screencast_frame_ack(ScreencastFrameAckParams {
+						session_id: event_screencast_frame.session_id,
+					})
+					.await;
+
+				// debug!("{:?}", event_screencast_frame.metadata);
+
+				cloned_event_screencast_frames
+					.lock()
+					.await
+					.push(event_screencast_frame.as_ref().clone());
+			}
+		})
+		.abort_handle();
+
+		self.inner
+			.start_screencast(StartScreencastParams::default())
+			.await?;
+
+		tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+		let end_time = SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.unwrap()
+			.as_millis();
+
+		self.inner.stop_screencast(StopScreencastParams {}).await?;
+		event_stream_abort_handle.abort();
+
+		let mut interpolated_frames = event_screencast_frames
+			.lock()
+			.await
+			.clone()
+			.into_iter()
+			.fold(
+				(Vec::<EventScreencastFrame>::new(), Vec::<Vec<u8>>::new()),
+				|(mut acc, mut frames), frame| {
+					debug!("{:?}", acc.len());
+					debug!("{:?}", frame.metadata.timestamp);
+
+					if let Some(prev) = acc.last() {
+						let duration = frame.clone().metadata.timestamp.unwrap().inner()
+							- prev.clone().metadata.timestamp.unwrap().inner();
+						debug!("{:?}", duration);
+
+						let dupe_frames = (duration * 25.);
+						debug!("dubed frames{:?}", dupe_frames);
+						for _ in 0..=dupe_frames as i32 {
+							frames.push(AsRef::<[u8]>::as_ref(&frame.data).to_vec());
+						}
+					}
+					acc.push(frame);
+
+					(acc, frames)
+				},
+			);
+
+		let ehak = (interpolated_frames
+			.0
+			.last()
+			.unwrap()
+			.metadata
+			.timestamp
+			.clone()
+			.unwrap()
+			.inner() * 1000.) as u128;
+
+		let dupe_frames = ((end_time - ehak) / 1000) * 25;
+		debug!("dubbbb frames {:?} ", dupe_frames);
+		for _ in 0..=dupe_frames {
+			interpolated_frames.1.push(
+				AsRef::<[u8]>::as_ref(&interpolated_frames.1.last().unwrap().clone()).to_vec(),
+			);
+		}
+
+		debug!(
+			"--------------------------{:?}",
+			interpolated_frames.1.len()
+		);
+
+		Ok(vec![])
 	}
 
 	/// Brings page to front (activates tab)
