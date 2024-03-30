@@ -7,6 +7,7 @@ use std::time::Duration;
 use chromiumoxide_cdp::cdp::browser_protocol::browser::{
 	BrowserContextId, CloseReturns, GetVersionParams, GetVersionReturns,
 };
+use chromiumoxide_cdp::cdp::browser_protocol::system_info::{GetInfoParams, GetInfoReturns};
 use chromiumoxide_cdp::cdp::browser_protocol::target::{
 	CreateBrowserContextParams, CreateTargetParams, DisposeBrowserContextParams, TargetId,
 	TargetInfo,
@@ -404,6 +405,11 @@ impl Browser {
 	/// Version information about the browser
 	pub async fn version(&self) -> Result<GetVersionReturns> {
 		Ok(self.execute(GetVersionParams::default()).await?.result)
+	}
+
+	/// System information about the browser
+	pub async fn info(&self) -> Result<GetInfoReturns> {
+		Ok(self.execute(GetInfoParams {}).await?.result)
 	}
 
 	/// Returns the user agent of the browser
