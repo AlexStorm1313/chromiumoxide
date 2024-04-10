@@ -8,7 +8,6 @@ use base64::Engine;
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::fetch::{
 	self, ContinueRequestParams, EventRequestPaused, FailRequestParams, FulfillRequestParams,
-	RequestId,
 };
 use chromiumoxide::cdp::browser_protocol::network::{
 	self, ErrorReason, EventRequestWillBeSent, ResourceType,
