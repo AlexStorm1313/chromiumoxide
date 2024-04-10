@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chromiumoxide_cdp::cdp::browser_protocol::css;
 use chromiumoxide_cdp::cdp::browser_protocol::dom::*;
@@ -26,6 +27,8 @@ use futures::channel::mpsc::unbounded;
 use futures::channel::oneshot::channel as oneshot_channel;
 use futures::{stream, SinkExt, StreamExt};
 use serde_json::json;
+use tokio::sync::Mutex;
+use tokio::time::sleep;
 use tracing::debug;
 
 use crate::element::Element;
@@ -657,6 +660,8 @@ impl Page {
 
 		// Resize window to load all content on the page
 		if screenshot_params.full_page() {
+			capture_screenshot_params.capture_beyond_viewport = Some(true); // Just an extra setting for good measure
+																// capture_screenshot_params.optimize_for_speed = Some(true);
 			viewport.width = metrics.css_content_size.width;
 			viewport.height = metrics.css_content_size.height;
 			device_metrics.width = metrics.css_content_size.width as i64;
@@ -723,6 +728,109 @@ impl Page {
 		let img = self.screenshot(params).await?;
 		utils::write(output.as_ref(), &img).await?;
 		Ok(img)
+	}
+
+	/// Screencast shit
+	pub async fn screencast(&self) -> Vec<Vec<u8>> {
+		let inner_page = self.inner.clone();
+		let event_screencast_frames = Arc::new(Mutex::new(vec![]));
+		let event_screencast_frames_cloned = event_screencast_frames.clone();
+
+		let mut event_stream = self.event_listener::<EventScreencastFrame>().await.unwrap();
+		let event_screencast_frame_handle = tokio::spawn(async move {
+			while let Some(event) = event_stream.next().await {
+				let _ = inner_page
+					.screencast_frame_ack(ScreencastFrameAckParams {
+						session_id: event.session_id,
+					})
+					.await;
+
+				// debug!("Frame Metadata :: {:?}", event.metadata);
+
+				// let screencast_frame_metadata = event.metadata.clone();
+				event_screencast_frames_cloned
+					.lock()
+					.await
+					.push(event.clone());
+			}
+		});
+
+		let _ = self
+			.inner
+			.start_screencast(StartScreencastParams::default())
+			.await;
+
+		sleep(Duration::from_secs(1)).await; // 1 seconds = 120 frames
+
+		let _ = self
+			.inner
+			.stop_screencast(StopScreencastParams::default())
+			.await;
+		event_screencast_frame_handle.abort_handle().abort();
+
+		let end_time = SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.unwrap()
+			.as_millis() as i64;
+
+		debug!("ENDTIME in ms {:?}", end_time);
+
+		// debug!("Collected frames {:?}", event_screencast_frames);
+
+		// Debug some shit for sanity
+		let locked_vector = event_screencast_frames.lock().await;
+		let first_timestamp = (locked_vector
+			.first()
+			.unwrap()
+			.metadata
+			.timestamp
+			.as_ref()
+			.unwrap()
+			.inner()
+			.to_owned() * 1000.)
+			.round() as i64;
+		let last_timestamp = (locked_vector
+			.last()
+			.unwrap()
+			.metadata
+			.timestamp
+			.as_ref()
+			.unwrap()
+			.inner()
+			.to_owned() * 1000.)
+			.round() as i64;
+
+		debug!(
+			"First: {:?}, Last: {:?}, Total duration: {:?}",
+			first_timestamp,
+			last_timestamp,
+			(end_time - first_timestamp)
+		);
+
+		// Interpolate frames based on 120 fps for now
+		// let mut interpolated_frames = vec![];
+
+		debug!(
+			"Frame amount before interpolation {:?}",
+			locked_vector.len()
+		);
+		let mut raw_frames = vec![];
+		for frame_metadata in locked_vector.iter() {
+			// let timestamp_flex = (frame_metadata.clone().timestamp.unwrap().inner().to_owned()
+			// 	* 1000.)
+			// 	.round() as i64;
+
+			let vecu8 = AsRef::<[u8]>::as_ref(&frame_metadata.data).to_vec();
+
+			// debug!("Frame Metadata :: {:?}", frame_metadata);
+			// debug!("timestamp :: {:?}", timestamp_flex);
+			raw_frames.push(frame_metadata.data.clone());
+		}
+
+		debug!("Raw FRAME {:?}", raw_frames.first());
+
+		// raw_frames
+		vec![]
 	}
 
 	/// Print the current page as pdf.
