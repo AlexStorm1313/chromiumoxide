@@ -61,7 +61,6 @@
 
 #![warn(missing_debug_implementations, rust_2018_idioms)]
 
-use crate::handler::http::HttpRequest;
 use std::sync::Arc;
 
 /// reexport the generated cdp types
@@ -74,6 +73,7 @@ pub use crate::element::Element;
 pub use crate::error::Result;
 #[cfg(feature = "fetcher")]
 pub use crate::fetcher::{BrowserFetcher, BrowserFetcherOptions};
+use crate::handler::http::HttpRequest;
 pub use crate::handler::Handler;
 pub use crate::page::Page;
 
@@ -86,7 +86,7 @@ pub mod element;
 pub mod error;
 #[cfg(feature = "fetcher")]
 pub mod fetcher {
-    pub use chromiumoxide_fetcher::*;
+	pub use chromiumoxide_fetcher::*;
 }
 pub mod async_process;
 pub mod handler;

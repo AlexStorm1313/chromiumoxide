@@ -8,27 +8,27 @@ use chromiumoxide_cdp::cdp::browser_protocol::browser::BrowserContextId;
 /// belong to the parent page's browser context.
 #[derive(Debug, Clone, Default, Hash, Eq, PartialEq)]
 pub struct BrowserContext {
-    id: Option<BrowserContextId>,
+	id: Option<BrowserContextId>,
 }
 
 impl BrowserContext {
-    /// Whether the BrowserContext is incognito.
-    pub fn is_incognito(&self) -> bool {
-        self.id.is_some()
-    }
+	/// Whether the BrowserContext is incognito.
+	pub fn is_incognito(&self) -> bool {
+		self.id.is_some()
+	}
 
-    /// The identifier of this context
-    pub fn id(&self) -> Option<&BrowserContextId> {
-        self.id.as_ref()
-    }
+	/// The identifier of this context
+	pub fn id(&self) -> Option<&BrowserContextId> {
+		self.id.as_ref()
+	}
 
-    pub(crate) fn take(&mut self) -> Option<BrowserContextId> {
-        self.id.take()
-    }
+	pub(crate) fn take(&mut self) -> Option<BrowserContextId> {
+		self.id.take()
+	}
 }
 
 impl From<BrowserContextId> for BrowserContext {
-    fn from(id: BrowserContextId) -> Self {
-        Self { id: Some(id) }
-    }
+	fn from(id: BrowserContextId) -> Self {
+		Self { id: Some(id) }
+	}
 }
