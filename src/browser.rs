@@ -374,6 +374,22 @@ impl Browser {
 		&self.debug_ws_url
 	}
 
+	/// Get the port of the websocket this browser is attached to
+	pub fn port(&self) -> i32 {
+		let start_bytes =
+			self.websocket_address()
+				.find("ws://127.0.0.1:")
+				.unwrap_or(0) + "ws://127.0.0.1:".len();
+		let end_bytes = self
+			.websocket_address()
+			.find("/devtools")
+			.unwrap_or(self.websocket_address().len());
+
+		let result = &self.websocket_address()[start_bytes..end_bytes];
+
+		result.parse::<i32>().unwrap()
+	}
+
 	/// Whether the BrowserContext is incognito.
 	pub fn is_incognito(&self) -> bool {
 		self.is_incognito_configured() || self.browser_context.is_incognito()
@@ -896,7 +912,7 @@ impl BrowserConfig {
 		}
 
 		if self.headless {
-			cmd.args(["--headless", "--hide-scrollbars", "--mute-audio"]);
+			// cmd.args(["--headless", "--hide-scrollbars", "--mute-audio"]);
 		}
 
 		if self.incognito {
