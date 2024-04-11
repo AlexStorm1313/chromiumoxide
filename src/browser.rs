@@ -18,6 +18,7 @@ use futures::channel::mpsc::{channel, unbounded, Sender};
 use futures::channel::oneshot::channel as oneshot_channel;
 use futures::{select, SinkExt};
 use tracing::debug;
+use url::Url;
 
 use crate::async_process::{self, Child, ExitStatus, Stdio};
 use crate::cmd::{to_command_response, CommandMessage};
@@ -375,19 +376,11 @@ impl Browser {
 	}
 
 	/// Get the port of the websocket this browser is attached to
-	pub fn port(&self) -> i32 {
-		let start_bytes =
-			self.websocket_address()
-				.find("ws://127.0.0.1:")
-				.unwrap_or(0) + "ws://127.0.0.1:".len();
-		let end_bytes = self
-			.websocket_address()
-			.find("/devtools")
-			.unwrap_or(self.websocket_address().len());
-
-		let result = &self.websocket_address()[start_bytes..end_bytes];
-
-		result.parse::<i32>().unwrap()
+	pub fn port(&self) -> u16 {
+		Url::parse(&self.debug_ws_url)
+			.unwrap()
+			.port()
+			.unwrap_or_default()
 	}
 
 	/// Whether the BrowserContext is incognito.
