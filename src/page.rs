@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Stdio;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chromiumoxide_cdp::cdp::browser_protocol::css;
 use chromiumoxide_cdp::cdp::browser_protocol::dom::*;
@@ -20,7 +18,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::target::{SessionId, TargetId};
 use chromiumoxide_cdp::cdp::js_protocol::debugger::GetScriptSourceParams;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 	AddBindingParams, CallArgument, CallFunctionOnParams, EvaluateParams, ExecutionContextId,
-	RemoteObject, RemoteObjectType, ScriptId,
+	RemoteObjectType, ScriptId,
 };
 use chromiumoxide_cdp::cdp::{browser_protocol, js_protocol, IntoEventKind};
 use chromiumoxide_types::*;
@@ -28,9 +26,10 @@ use futures::channel::mpsc::unbounded;
 use futures::channel::oneshot::channel as oneshot_channel;
 use futures::{stream, SinkExt, StreamExt};
 use serde_json::json;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Mutex;
-use tokio::time::sleep;
+use tokio::select;
+use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use crate::element::Element;
@@ -732,299 +731,70 @@ impl Page {
 		Ok(img)
 	}
 
-	pub async fn screencast(&self) -> Vec<Vec<u8>> {
-		let inner_page = self.inner.clone();
-		let event_screencast_frames = Arc::new(Mutex::new(vec![]));
-		let event_screencast_frames_cloned = event_screencast_frames.clone();
+	pub async fn start_screencast(
+		&self,
+		params: impl Into<StartScreencastParams>,
+	) -> Result<
+		(
+			JoinHandle<Result<Vec<EventScreencastFrame>, CdpError>>,
+			CancellationToken,
+		),
+		CdpError,
+	> {
+		let page_inner = self.inner.clone();
 
-		let mut event_stream = self.event_listener::<EventScreencastFrame>().await.unwrap();
-		let event_screencast_frame_handle = tokio::spawn(async move {
-			while let Some(event) = event_stream.next().await {
-				let _ = inner_page
-					.screencast_frame_ack(ScreencastFrameAckParams {
-						session_id: event.session_id,
-					})
-					.await;
+		let cancel_token = CancellationToken::new();
+		let cloned_cancel_token = cancel_token.clone();
+		let mut event_stream = self.event_listener::<EventScreencastFrame>().await?;
+		let event_handle = tokio::spawn(async move {
+			let event_screencast_frames = Arc::new(RwLock::new(vec![]));
+			let event_screencast_frames_cloned = event_screencast_frames.clone();
 
-				// debug!("Frame Metadata :: {:?}", event.metadata);
+			// I want this simpler, but there is no event for stopping screencast shit
+			Ok(select! {
+				_ = cloned_cancel_token.cancelled() => {event_screencast_frames_cloned.read().await.to_vec()}
+				_ = tokio::spawn(async move {
+					// let mut event_screencast_frames = vec![];
 
-				// let screencast_frame_metadata = event.metadata.clone();
-				event_screencast_frames_cloned
-					.lock()
-					.await
-					.push(event.clone());
-			}
+					while let Some(event_screencast_frame) = event_stream.next().await {
+						let screencast_frame_ack_future =
+							page_inner.screencast_frame_ack(ScreencastFrameAckParams {
+								session_id: event_screencast_frame.session_id,
+							});
+
+							event_screencast_frames.write().await.push(event_screencast_frame.as_ref().clone()); // Not sure
+
+						let _ = screencast_frame_ack_future.await;
+					};
+				}) => {
+					event_screencast_frames_cloned.read().await.to_vec()
+				}
+			})
+
+			// while let Some(event_screencast_frame) = event_stream.next().await {
+			// 	let screencast_frame_ack_future =
+			// 		page_inner.screencast_frame_ack(ScreencastFrameAckParams {
+			// 			session_id: event_screencast_frame.session_id,
+			// 		});
+
+			// 	event_screencast_frames.push(event_screencast_frame.as_ref().clone()); // Not sure
+
+			// 	screencast_frame_ack_future.await?;
+			// }
+
+			// Ok(event_screencast_frames)
 		});
 
-		let _ = self
-			.inner
-			.start_screencast(StartScreencastParams::default())
-			.await;
+		self.inner.start_screencast(params.into()).await?;
 
-		sleep(Duration::from_secs(4)).await; // 1 seconds = 120 frames
-
-		let _ = self
-			.inner
-			.stop_screencast(StopScreencastParams::default())
-			.await;
-		event_screencast_frame_handle.abort_handle().abort();
-
-		let end_time = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_millis() as i64;
-
-		debug!("ENDTIME in ms {:?}", end_time);
-
-		// debug!("Collected frames {:?}", event_screencast_frames);
-
-		// Debug some shit for sanity
-		let locked_vector = event_screencast_frames.lock().await;
-		let first_timestamp = (locked_vector
-			.first()
-			.unwrap()
-			.metadata
-			.timestamp
-			.as_ref()
-			.unwrap()
-			.inner()
-			.to_owned() * 1000.)
-			.round() as i64;
-		let last_timestamp = (locked_vector
-			.last()
-			.unwrap()
-			.metadata
-			.timestamp
-			.as_ref()
-			.unwrap()
-			.inner()
-			.to_owned() * 1000.)
-			.round() as i64;
-
-		debug!(
-			"First: {:?}, Last: {:?}, Total duration: {:?}",
-			first_timestamp,
-			last_timestamp,
-			(end_time - first_timestamp)
-		);
-
-		// Interpolate frames based on 120 fps for now
-		// let mut interpolated_frames = vec![];
-
-		debug!(
-			"Frame amount before interpolation {:?}",
-			locked_vector.len()
-		);
-
-		let mut raw_frames = vec![];
-		for frame_metadata in locked_vector.iter() {
-			// let timestamp_flex = (frame_metadata.clone().timestamp.unwrap().inner().to_owned()
-			// 	* 1000.)
-			// 	.round() as i64;
-			let vecu8 = AsRef::<[u8]>::as_ref(&frame_metadata.data);
-			let decoded_data = base64::decode(vecu8).unwrap().clone();
-
-			// debug!("Frame Metadata :: {:?}", frame_metadata);
-			// debug!("timestamp :: {:?}", timestamp_flex);
-			raw_frames.push(decoded_data);
-		}
-
-		let bbb = &*raw_frames.concat();
-
-		let mut cmd = tokio::process::Command::new("ffmpeg");
-		cmd.args(vec![
-			"-f",
-			"image2pipe",
-			"-i",
-			"pipe:0",
-			"-r",
-			"25",
-			"-loglevel",
-			"error",
-			"-an",
-			"-b:v",
-			"0",
-			"-avioflags",
-			"direct",
-			"-probesize",
-			"32",
-			"-analyzeduration",
-			"0",
-			"-fpsprobesize",
-			"0",
-			"-fflags",
-			"nobuffer",
-			"-c:v",
-			"libvpx-vp9",
-			"-quality",
-			"realtime",
-			"/usr/src/app/test_videos/kut.mp4",
-		]);
-
-		//Playwright
-		// cmd.args(vec![
-		// 	"-loglevel",
-		// 	"error",
-		// 	"-f",
-		// 	"image2pipe",
-		// 	"-avioflags",
-		// 	"direct",
-		// 	"-fpsprobesize",
-		// 	"0",
-		// 	"-probesize",
-		// 	"32",
-		// 	"-analyzeduration",
-		// 	"0",
-		// 	"-c:v",
-		// 	"mjpeg",
-		// 	"-i",
-		// 	"-",
-		// 	"-y",
-		// 	"-an",
-		// 	"-r",
-		// 	"25",
-		// 	"-c:v",
-		// 	"vp8",
-		// 	"-qmin",
-		// 	"0",
-		// 	"-qmax",
-		// 	"50",
-		// 	"-crf",
-		// 	"8",
-		// 	"-deadline",
-		// 	"realtime",
-		// 	"-speed",
-		// 	"8",
-		// 	"-b:v",
-		// 	"1M",
-		// 	"-threads",
-		// 	"1",
-		// 	"/usr/src/app/test_videos/kut.mp4",
-		// ]);
-		let process = match cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).spawn() {
-			Err(why) => panic!("couldn't spawn wc: {}", why),
-			Ok(process) => process,
-		};
-
-		match &process.stdin.unwrap().write_all(bbb).await {
-			Err(why) => debug!("couldn't write to wc stdin: {}", why),
-			Ok(_) => debug!("sent pangram to wc"),
-		}
-
-		// let mut s = String::new();
-		// match process.stdout.unwrap().read_to_string(&mut s).await {
-		// 	Err(why) => debug!("couldn't read wc stdout: {}", why),
-		// 	Ok(_) => debug!("wc responded with:\n{}", s),
-		// }
-
-		// debug!("Output {:?}", s);
-
-		// raw_frames
-		vec![]
+		Ok((event_handle, cancel_token))
 	}
 
-	/// Screencast shit
-	// pub async fn screencast(&self) -> Vec<Vec<u8>> {
-	// 	let inner_page = self.inner.clone();
-	// 	let event_screencast_frames = Arc::new(Mutex::new(vec![]));
-	// 	let event_screencast_frames_cloned = event_screencast_frames.clone();
+	pub async fn stop_screencast(&self, params: impl Into<StopScreencastParams>) -> Result<&Self> {
+		self.inner.stop_screencast(params.into()).await?;
 
-	// 	let mut event_stream = self.event_listener::<EventScreencastFrame>().await.unwrap();
-	// 	let event_screencast_frame_handle = tokio::spawn(async move {
-	// 		while let Some(event) = event_stream.next().await {
-	// 			let _ = inner_page
-	// 				.screencast_frame_ack(ScreencastFrameAckParams {
-	// 					session_id: event.session_id,
-	// 				})
-	// 				.await;
-
-	// 			// debug!("Frame Metadata :: {:?}", event.metadata);
-
-	// 			// let screencast_frame_metadata = event.metadata.clone();
-	// 			event_screencast_frames_cloned
-	// 				.lock()
-	// 				.await
-	// 				.push(event.clone());
-	// 		}
-	// 	});
-
-	// 	let _ = self
-	// 		.inner
-	// 		.start_screencast(StartScreencastParams::default())
-	// 		.await;
-
-	// 	sleep(Duration::from_secs(1)).await; // 1 seconds = 120 frames
-
-	// 	let _ = self
-	// 		.inner
-	// 		.stop_screencast(StopScreencastParams::default())
-	// 		.await;
-	// 	event_screencast_frame_handle.abort_handle().abort();
-
-	// 	let end_time = SystemTime::now()
-	// 		.duration_since(UNIX_EPOCH)
-	// 		.unwrap()
-	// 		.as_millis() as i64;
-
-	// 	debug!("ENDTIME in ms {:?}", end_time);
-
-	// 	// debug!("Collected frames {:?}", event_screencast_frames);
-
-	// 	// Debug some shit for sanity
-	// 	let locked_vector = event_screencast_frames.lock().await;
-	// 	let first_timestamp = (locked_vector
-	// 		.first()
-	// 		.unwrap()
-	// 		.metadata
-	// 		.timestamp
-	// 		.as_ref()
-	// 		.unwrap()
-	// 		.inner()
-	// 		.to_owned() * 1000.)
-	// 		.round() as i64;
-	// 	let last_timestamp = (locked_vector
-	// 		.last()
-	// 		.unwrap()
-	// 		.metadata
-	// 		.timestamp
-	// 		.as_ref()
-	// 		.unwrap()
-	// 		.inner()
-	// 		.to_owned() * 1000.)
-	// 		.round() as i64;
-
-	// 	debug!(
-	// 		"First: {:?}, Last: {:?}, Total duration: {:?}",
-	// 		first_timestamp,
-	// 		last_timestamp,
-	// 		(end_time - first_timestamp)
-	// 	);
-
-	// 	// Interpolate frames based on 120 fps for now
-	// 	// let mut interpolated_frames = vec![];
-
-	// 	debug!(
-	// 		"Frame amount before interpolation {:?}",
-	// 		locked_vector.len()
-	// 	);
-	// 	let mut raw_frames = vec![];
-	// 	for frame_metadata in locked_vector.iter() {
-	// 		// let timestamp_flex = (frame_metadata.clone().timestamp.unwrap().inner().to_owned()
-	// 		// 	* 1000.)
-	// 		// 	.round() as i64;
-
-	// 		let vecu8 = AsRef::<[u8]>::as_ref(&frame_metadata.data).to_vec();
-
-	// 		// debug!("Frame Metadata :: {:?}", frame_metadata);
-	// 		// debug!("timestamp :: {:?}", timestamp_flex);
-	// 		raw_frames.push(frame_metadata.data.clone());
-	// 	}
-
-	// 	debug!("Raw FRAME {:?}", raw_frames.first());
-
-	// 	// raw_frames
-	// 	vec![]
-	// }
+		Ok(&self)
+	}
 
 	/// Print the current page as pdf.
 	///
@@ -2077,4 +1847,17 @@ impl From<CaptureScreenshotParams> for ScreenshotParams {
 			..Default::default()
 		}
 	}
+}
+
+/// Page screencast parameters with extra options.
+#[derive(Debug, Default)]
+pub struct ScreencastParams {
+	/// Chrome DevTools Protocol screenshot options. Clip options
+	pub start_screencast_params: StartScreencastParams,
+	// Supply device metrics, usefull to keep device_scaling when full_page is set to true
+	pub viewport: Option<viewport::Viewport>,
+	/// Take full page screenshot.
+	pub full_page: Option<bool>,
+	/// Make the background transparent (png only).
+	pub omit_background: Option<bool>,
 }
