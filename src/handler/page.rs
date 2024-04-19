@@ -19,7 +19,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::page::{
 	CaptureScreenshotParams, FrameId, GetFrameTreeParams, GetFrameTreeReturns,
 	GetLayoutMetricsParams, GetLayoutMetricsReturns, ScreencastFrameAckParams,
 	ScreencastFrameAckReturns, StartScreencastParams, StartScreencastReturns, StopScreencastParams,
-	StopScreencastReturns, Viewport,
+	StopScreencastReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::target::{ActivateTargetParams, SessionId, TargetId};
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
@@ -113,15 +113,6 @@ impl PageInner {
 		&self.sender
 	}
 
-	/// Returns the first element in the node which matches the given CSS
-	/// selector.
-	pub async fn find_element(&self, selector: impl Into<String>, node: NodeId) -> Result<NodeId> {
-		Ok(self
-			.execute(QuerySelectorParams::new(node, selector))
-			.await?
-			.node_id)
-	}
-
 	/// Activates (focuses) the target.
 	pub async fn activate(&self) -> Result<&Self> {
 		self.execute(ActivateTargetParams::new(self.target_id().clone()))
@@ -134,8 +125,21 @@ impl PageInner {
 		Ok(self.execute(GetVersionParams::default()).await?.result)
 	}
 
+	/// Returns the first element in the node which matches the given CSS
+	/// selector.
+	pub async fn find_query_selector(
+		&self,
+		selector: impl Into<String>,
+		node: NodeId,
+	) -> Result<NodeId> {
+		Ok(self
+			.execute(QuerySelectorParams::new(node, selector))
+			.await?
+			.node_id)
+	}
+
 	/// Return all `Element`s inside the node that match the given selector
-	pub(crate) async fn find_elements(
+	pub(crate) async fn find_query_selector_all(
 		&self,
 		selector: impl Into<String>,
 		node: NodeId,

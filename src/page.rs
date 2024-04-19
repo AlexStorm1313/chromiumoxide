@@ -437,21 +437,40 @@ impl Page {
 		Ok(self.inner.get_document().await?.root)
 	}
 
-	/// Returns the first element in the document which matches the given CSS
-	/// selector.
-	///
-	/// Execute a query selector on the document's node.
-	pub async fn find_element(&self, selector: impl Into<String>) -> Result<Element> {
-		let root = self.get_document_node().await?.node_id;
-		let node_id = self.inner.find_element(selector, root).await?;
-		Element::new(Arc::clone(&self.inner), node_id).await
+	/// Return first Element in the document that match the given selector
+	pub async fn find_element(&self, selector: &String) -> Result<Element> {
+		Element::new(
+			Arc::clone(&self.inner),
+			match selector[0..2].eq("//") {
+				true => {
+					self.inner.get_document().await?;
+					self.inner.find_xpaths(selector).await?[0]
+				}
+				false => {
+					let root = self.get_document_node().await?.node_id;
+					self.inner.find_query_selector(selector, root).await?
+				}
+			},
+		)
+		.await
 	}
 
-	/// Return all `Element`s in the document that match the given selector
-	pub async fn find_elements(&self, selector: impl Into<String>) -> Result<Vec<Element>> {
-		let root = self.get_document_node().await?.node_id;
-		let node_ids = self.inner.find_elements(selector, root).await?;
-		Element::from_nodes(&self.inner, &node_ids).await
+	/// Return all Elements in the document that match the given selector
+	pub async fn find_elements(&self, selector: &String) -> Result<Vec<Element>> {
+		Element::from_nodes(
+			&self.inner,
+			&match selector[0..2].eq("//") {
+				true => {
+					self.inner.get_document().await?;
+					self.inner.find_xpaths(selector).await?
+				}
+				false => {
+					let root = self.get_document_node().await?.node_id;
+					self.inner.find_query_selector_all(selector, root).await?
+				}
+			},
+		)
+		.await
 	}
 
 	/// Wait for selector or when the timer runs out
@@ -468,49 +487,6 @@ impl Page {
 			tokio::spawn(async move {
 				loop {
 					if let Ok(element) = page.find_element(&selector).await {
-						break (element);
-					}
-				}
-			}),
-		)
-		.await
-		{
-			Ok(element) => Ok(element.unwrap()),
-			Err(error) => Err(CdpError::msg(error.to_string())),
-		}
-	}
-
-	/// Returns the first element in the document which matches the given xpath
-	/// selector.
-	///
-	/// Execute a xpath selector on the document's node.
-	pub async fn find_xpath(&self, selector: impl Into<String>) -> Result<Element> {
-		self.inner.get_document().await?;
-		let node_id = self.inner.find_xpaths(selector).await?[0];
-		Element::new(Arc::clone(&self.inner), node_id).await
-	}
-
-	/// Return all `Element`s in the document that match the given xpath selector
-	pub async fn find_xpaths(&self, selector: impl Into<String>) -> Result<Vec<Element>> {
-		self.inner.get_document().await?;
-		let node_ids = self.inner.find_xpaths(selector).await?;
-		Element::from_nodes(&self.inner, &node_ids).await
-	}
-
-	/// Wait for selector or when the timer runs out
-	pub async fn wait_for_xpath(
-		&self,
-		selector: impl Into<String>,
-		duration: u64,
-	) -> Result<Element> {
-		let selector = selector.into();
-		let page = self.clone();
-
-		match tokio::time::timeout(
-			tokio::time::Duration::from_millis(duration),
-			tokio::spawn(async move {
-				loop {
-					if let Ok(element) = page.find_xpath(&selector).await {
 						break (element);
 					}
 				}
