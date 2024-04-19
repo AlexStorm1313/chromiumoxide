@@ -731,7 +731,7 @@ impl Page {
 		Ok(img)
 	}
 
-	pub async fn start_screencast(
+	pub async fn screencast(
 		&self,
 		params: impl Into<StartScreencastParams>,
 	) -> Result<
@@ -742,9 +742,11 @@ impl Page {
 		CdpError,
 	> {
 		let page_inner = self.inner.clone();
+		let page_inner_cloned = page_inner.clone();
 
 		let cancel_token = CancellationToken::new();
-		let cloned_cancel_token = cancel_token.clone();
+		let cancel_token_cloned = cancel_token.clone();
+
 		let mut event_stream = self.event_listener::<EventScreencastFrame>().await?;
 		let event_handle = tokio::spawn(async move {
 			let event_screencast_frames = Arc::new(RwLock::new(vec![]));
@@ -752,10 +754,12 @@ impl Page {
 
 			// I want this simpler, but there is no event for stopping screencast shit
 			Ok(select! {
-				_ = cloned_cancel_token.cancelled() => {event_screencast_frames_cloned.read().await.to_vec()}
-				_ = tokio::spawn(async move {
-					// let mut event_screencast_frames = vec![];
+				_ = cancel_token_cloned.cancelled() => {
+					let _ = page_inner_cloned.stop_screencast(StopScreencastParams::default()).await;
 
+					event_screencast_frames_cloned.read().await.to_vec()
+				}
+				_ = tokio::spawn(async move {
 					while let Some(event_screencast_frame) = event_stream.next().await {
 						let screencast_frame_ack_future =
 							page_inner.screencast_frame_ack(ScreencastFrameAckParams {
@@ -767,33 +771,16 @@ impl Page {
 						let _ = screencast_frame_ack_future.await;
 					};
 				}) => {
+					let _ = page_inner_cloned.stop_screencast(StopScreencastParams::default()).await;
+
 					event_screencast_frames_cloned.read().await.to_vec()
 				}
 			})
-
-			// while let Some(event_screencast_frame) = event_stream.next().await {
-			// 	let screencast_frame_ack_future =
-			// 		page_inner.screencast_frame_ack(ScreencastFrameAckParams {
-			// 			session_id: event_screencast_frame.session_id,
-			// 		});
-
-			// 	event_screencast_frames.push(event_screencast_frame.as_ref().clone()); // Not sure
-
-			// 	screencast_frame_ack_future.await?;
-			// }
-
-			// Ok(event_screencast_frames)
 		});
 
 		self.inner.start_screencast(params.into()).await?;
 
 		Ok((event_handle, cancel_token))
-	}
-
-	pub async fn stop_screencast(&self, params: impl Into<StopScreencastParams>) -> Result<&Self> {
-		self.inner.stop_screencast(params.into()).await?;
-
-		Ok(&self)
 	}
 
 	/// Print the current page as pdf.
