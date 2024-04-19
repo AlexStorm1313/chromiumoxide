@@ -755,14 +755,14 @@ impl Page {
 			// I want this simpler, but there is no event for stopping screencast shit
 			Ok(select! {
 				_ = cancel_token_cloned.cancelled() => {
-					let _ = page_inner_cloned.stop_screencast(StopScreencastParams::default()).await;
+					let _ = page_inner.stop_screencast(StopScreencastParams::default()).await;
 
 					event_screencast_frames_cloned.read().await.to_vec()
 				}
 				_ = tokio::spawn(async move {
 					while let Some(event_screencast_frame) = event_stream.next().await {
 						let screencast_frame_ack_future =
-							page_inner.screencast_frame_ack(ScreencastFrameAckParams {
+							page_inner_cloned.screencast_frame_ack(ScreencastFrameAckParams {
 								session_id: event_screencast_frame.session_id,
 							});
 
@@ -771,7 +771,7 @@ impl Page {
 						let _ = screencast_frame_ack_future.await;
 					};
 				}) => {
-					let _ = page_inner_cloned.stop_screencast(StopScreencastParams::default()).await;
+					let _ = page_inner.stop_screencast(StopScreencastParams::default()).await;
 
 					event_screencast_frames_cloned.read().await.to_vec()
 				}
