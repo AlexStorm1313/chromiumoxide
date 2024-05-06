@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chromiumoxide_cdp::cdp::browser_protocol::browser::{
-	BrowserContextId, CloseReturns, GetVersionParams, GetVersionReturns,
+	BrowserContextId, CancelDownloadParams, CancelDownloadReturns, CloseReturns, GetVersionParams,
+	GetVersionReturns, SetDownloadBehaviorParams, SetDownloadBehaviorReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::system_info::{GetInfoParams, GetInfoReturns};
 use chromiumoxide_cdp::cdp::browser_protocol::target::{
@@ -412,18 +413,34 @@ impl Browser {
 	}
 
 	/// Version information about the browser
-	pub async fn version(&self) -> Result<GetVersionReturns> {
+	pub async fn get_version(&self) -> Result<GetVersionReturns> {
 		Ok(self.execute(GetVersionParams::default()).await?.result)
 	}
 
 	/// System information about the browser
-	pub async fn info(&self) -> Result<GetInfoReturns> {
+	pub async fn get_info(&self) -> Result<GetInfoReturns> {
 		Ok(self.execute(GetInfoParams {}).await?.result)
+	}
+
+	/// Configure download behaviour
+	pub async fn set_download_behaviour(
+		&self,
+		params: impl Into<SetDownloadBehaviorParams>,
+	) -> Result<SetDownloadBehaviorReturns> {
+		Ok(self.execute(params.into()).await?.result)
+	}
+
+	/// Cancel download
+	pub async fn cancel_download(
+		&self,
+		params: impl Into<CancelDownloadParams>,
+	) -> Result<CancelDownloadReturns> {
+		Ok(self.execute(params.into()).await?.result)
 	}
 
 	/// Returns the user agent of the browser
 	pub async fn user_agent(&self) -> Result<String> {
-		Ok(self.version().await?.user_agent)
+		Ok(self.get_version().await?.user_agent)
 	}
 
 	/// Call a browser method.
