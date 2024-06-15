@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use chromiumoxide_cdp::cdp::browser_protocol::css;
 use chromiumoxide_cdp::cdp::browser_protocol::dom::*;
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
 	MediaFeature, SetDeviceMetricsOverrideParams, SetEmulatedMediaParams,
@@ -15,6 +14,7 @@ use chromiumoxide_cdp::cdp::browser_protocol::network::{
 use chromiumoxide_cdp::cdp::browser_protocol::page::*;
 use chromiumoxide_cdp::cdp::browser_protocol::performance::{GetMetricsParams, Metric};
 use chromiumoxide_cdp::cdp::browser_protocol::target::{SessionId, TargetId};
+use chromiumoxide_cdp::cdp::browser_protocol::{css, fetch};
 use chromiumoxide_cdp::cdp::js_protocol::debugger::GetScriptSourceParams;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 	AddBindingParams, CallArgument, CallFunctionOnParams, EvaluateParams, ExecutionContextId,
@@ -913,6 +913,19 @@ impl Page {
 	// Disables the CSS agent
 	pub async fn disable_css(&self) -> Result<&Self> {
 		self.execute(browser_protocol::css::DisableParams::default())
+			.await?;
+		Ok(self)
+	}
+
+	// Enable Fetch domain
+	pub async fn enable_fetch(&self, params: impl Into<fetch::EnableParams>) -> Result<&Self> {
+		self.execute(params.into()).await?;
+		Ok(self)
+	}
+
+	// Disable Fetch domain
+	pub async fn disable_fetch(&self) -> Result<&Self> {
+		self.execute(browser_protocol::fetch::DisableParams::default())
 			.await?;
 		Ok(self)
 	}

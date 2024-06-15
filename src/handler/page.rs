@@ -213,6 +213,7 @@ impl PageInner {
 				.unwrap(),
 		)
 		.await?;
+
 		Ok(self)
 	}
 

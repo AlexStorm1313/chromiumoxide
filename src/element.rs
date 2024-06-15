@@ -277,7 +277,7 @@ impl Element {
                     this.scrollIntoView({
                         block: 'center',
                         inline: 'center',
-                        behavior: 'instant'
+                        behavior: 'smooth'
                     });
                 return false;
             }",
@@ -289,6 +289,25 @@ impl Element {
 			let error_text = resp.result.value.unwrap().as_str().unwrap().to_string();
 			return Err(CdpError::ScrollingFailed(error_text));
 		}
+		Ok(self)
+	}
+
+	pub async fn scroll_man(&self) -> Result<&Self> {
+		self.call_js_fn(
+			"async function() { 
+			const scrollToTop = () => {
+			const c = document.documentElement.scrollTop || document.body.scrollTop;
+			if (c > 0) {
+			  window.requestAnimationFrame(scrollToTop);
+			  window.scrollTo(0, c - c / 8);
+			}
+		  };
+		  scrollToTop();
+		}",
+			true,
+		)
+		.await?;
+
 		Ok(self)
 	}
 
@@ -391,6 +410,19 @@ impl Element {
 		}
 	}
 
+	/// Set element attribute
+	pub async fn set_attribute(&self, name: String, value: String) -> Result<&Self> {
+		self.tab
+			.execute(dom::SetAttributeValueParams {
+				node_id: self.node_id,
+				name,
+				value,
+			})
+			.await?;
+
+		Ok(&self)
+	}
+
 	/// A `Stream` over all attributes and their values
 	pub async fn iter_attributes(
 		&self,
@@ -401,6 +433,29 @@ impl Element {
 			fut: None,
 			element: self,
 		})
+	}
+
+	pub async fn children(&self) -> Result<Vec<Element>> {
+		Ok(Element::from_nodes(
+			&self.tab,
+			&self
+				.description()
+				.await?
+				.children
+				.unwrap_or_default()
+				.into_iter()
+				.map(|child| child.node_id)
+				.collect::<Vec<NodeId>>(),
+		)
+		.await?)
+	}
+
+	pub async fn tag(&self) -> Result<String> {
+		Ok(self.description().await?.node_name)
+	}
+
+	pub async fn value(&self) -> Result<String> {
+		Ok(self.description().await?.node_value)
 	}
 
 	/// The inner text of this element.
