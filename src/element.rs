@@ -292,25 +292,6 @@ impl Element {
 		Ok(self)
 	}
 
-	pub async fn scroll_man(&self) -> Result<&Self> {
-		self.call_js_fn(
-			"async function() { 
-			const scrollToTop = () => {
-			const c = document.documentElement.scrollTop || document.body.scrollTop;
-			if (c > 0) {
-			  window.requestAnimationFrame(scrollToTop);
-			  window.scrollTo(0, c - c / 8);
-			}
-		  };
-		  scrollToTop();
-		}",
-			true,
-		)
-		.await?;
-
-		Ok(self)
-	}
-
 	/// Scrolls the element into view.
 	///
 	/// Fails if the element's node is not a HTML element or is detached from
@@ -320,7 +301,6 @@ impl Element {
 			.execute(
 				ScrollIntoViewIfNeededParams::builder()
 					.backend_node_id(self.backend_node_id)
-					.node_id(self.node_id)
 					.build(),
 			)
 			.await?;
@@ -396,8 +376,25 @@ impl Element {
 		Ok(node.attributes.unwrap_or_default())
 	}
 
+	/// Attributes of the `Element` node in the form of HasMap
+	pub async fn attributes_map(&self) -> Result<HashMap<String, String>> {
+		Ok(self
+			.description()
+			.await?
+			.attributes
+			.unwrap_or_default()
+			.chunks_exact(2)
+			.map(|chunk| (chunk[0].clone(), chunk[1].clone()))
+			.collect::<HashMap<String, String>>())
+	}
+
+	/// Returns the key and value of the element's attribute
+	pub async fn attribute(&self, attribute: &str) -> Result<Option<String>> {
+		Ok(self.attributes_map().await?.get(attribute).cloned())
+	}
+
 	/// Returns the value of the element's attribute
-	pub async fn attribute(&self, attribute: impl AsRef<str>) -> Result<Option<String>> {
+	pub async fn attribute_js(&self, attribute: impl AsRef<str>) -> Result<Option<String>> {
 		let js_fn = format!(
 			"function() {{ return this.getAttribute('{}'); }}",
 			attribute.as_ref()
@@ -637,7 +634,7 @@ impl<'a> Stream for AttributeStream<'a> {
 
 		if pin.fut.is_none() {
 			if let Some(name) = pin.attributes.pop() {
-				let fut = Box::pin(pin.element.attribute(name.clone()));
+				let fut = Box::pin(pin.element.attribute_js(name.clone()));
 				pin.fut = Some((name, fut));
 			} else {
 				return Poll::Ready(None);

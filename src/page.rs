@@ -585,12 +585,32 @@ impl Page {
 		Ok(self)
 	}
 
-	// Scroll/move viewport to Point position
-	pub async fn scroll(&self, point: Point) -> Result<&Self> {
-		let mut rect = self.layout_metrics().await?.css_content_size;
+	// Scroll/move viewport by adding Point to current position
+	pub async fn scroll_relative(&self, point: Point) -> Result<&Self> {
+		let visual_viewport = self.layout_metrics().await?.css_visual_viewport;
 
-		rect.x = point.x;
-		rect.y = point.y;
+		self.inner
+			.scroll(Rect {
+				x: point.x,
+				y: point.y,
+				width: visual_viewport.client_width,
+				height: visual_viewport.client_height,
+			})
+			.await?;
+
+		Ok(self)
+	}
+
+	// Scroll/move viewport to Point position
+	pub async fn scroll_absolute(&self, point: Point) -> Result<&Self> {
+		let visual_viewport = self.layout_metrics().await?.css_visual_viewport;
+
+		let rect = Rect {
+			x: (point.x - visual_viewport.page_x),
+			y: (point.y - visual_viewport.page_y),
+			width: visual_viewport.client_width,
+			height: visual_viewport.client_height,
+		};
 
 		self.inner.scroll(rect).await?;
 
