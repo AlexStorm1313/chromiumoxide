@@ -127,7 +127,7 @@ impl PageInner {
 
 	/// Returns the first element in the node which matches the given CSS
 	/// selector.
-	pub async fn find_query_selector(
+	pub async fn query_selector(
 		&self,
 		selector: impl Into<String>,
 		node: NodeId,
@@ -139,7 +139,7 @@ impl PageInner {
 	}
 
 	/// Return all `Element`s inside the node that match the given selector
-	pub(crate) async fn find_query_selector_all(
+	pub(crate) async fn query_selector_all(
 		&self,
 		selector: impl Into<String>,
 		node: NodeId,
@@ -151,8 +151,8 @@ impl PageInner {
 			.node_ids)
 	}
 
-	/// Returns all elements which matches the given xpath selector
-	pub async fn find_xpaths(&self, query: impl Into<String>) -> Result<Vec<NodeId>> {
+	/// Returns all elements which matches the given plain text, query selector or xpath search query
+	pub async fn perfrom_search(&self, query: impl Into<String>) -> Result<Vec<NodeId>> {
 		let perform_search_returns = self
 			.execute(PerformSearchParams {
 				query: query.into(),

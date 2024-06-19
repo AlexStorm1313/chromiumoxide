@@ -81,37 +81,19 @@ impl Element {
 	}
 
 	/// Return first Element in the document that match the given selector
-	pub async fn find_element(&self, selector: &String) -> Result<Element> {
+	pub async fn query_element(&self, selector: &String) -> Result<Element> {
 		Element::new(
-			Arc::clone(&self.tab),
-			match selector[0..2].eq("//") {
-				true => {
-					self.tab.get_document().await?;
-					self.tab.find_xpaths(selector).await?[0]
-				}
-				false => {
-					let root = self.tab.get_document().await?.root.node_id;
-					self.tab.find_query_selector(selector, root).await?
-				}
-			},
+			self.tab.clone(),
+			self.tab.query_selector(selector, self.node_id).await?,
 		)
 		.await
 	}
 
 	/// Return all Elements in the document that match the given selector
-	pub async fn find_elements(&self, selector: &String) -> Result<Vec<Element>> {
+	pub async fn query_elements(&self, selector: &String) -> Result<Vec<Element>> {
 		Element::from_nodes(
 			&self.tab,
-			&match selector[0..2].eq("//") {
-				true => {
-					self.tab.get_document().await?;
-					self.tab.find_xpaths(selector).await?
-				}
-				false => {
-					let root = self.tab.get_document().await?.root.node_id;
-					self.tab.find_query_selector_all(selector, root).await?
-				}
-			},
+			&self.tab.query_selector_all(selector, self.node_id).await?,
 		)
 		.await
 	}
