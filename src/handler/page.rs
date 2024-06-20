@@ -3,8 +3,9 @@ use std::sync::Arc;
 use chromiumoxide_cdp::cdp::browser_protocol::browser::{GetVersionParams, GetVersionReturns};
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
 	DiscardSearchResultsParams, GetDocumentParams, GetDocumentReturns, GetSearchResultsParams,
-	NodeId, PerformSearchParams, QuerySelectorAllParams, QuerySelectorParams, Rect, Rgba,
-	ScrollIntoViewIfNeededParams, ScrollIntoViewIfNeededReturns,
+	NodeId, PerformSearchParams, QuerySelectorAllParams, QuerySelectorParams, Rect,
+	RemoveNodeParams, RemoveNodeReturns, Rgba, ScrollIntoViewIfNeededParams,
+	ScrollIntoViewIfNeededReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
 	ClearDeviceMetricsOverrideParams, ClearDeviceMetricsOverrideReturns,
@@ -139,7 +140,7 @@ impl PageInner {
 	}
 
 	/// Return all `Element`s inside the node that match the given selector
-	pub(crate) async fn query_selector_all(
+	pub async fn query_selector_all(
 		&self,
 		selector: impl Into<String>,
 		node: NodeId,
@@ -176,6 +177,19 @@ impl PageInner {
 		.await?;
 
 		Ok(search_results.node_ids)
+	}
+
+	/// Remove Element from document
+	pub async fn remove(&self, node_id: NodeId) -> Result<RemoveNodeReturns> {
+		Ok(self
+			.execute(
+				RemoveNodeParams::builder()
+					.node_id(node_id)
+					.build()
+					.unwrap(),
+			)
+			.await?
+			.result)
 	}
 
 	/// Moves the mouse to this point (dispatches a mouseMoved event)

@@ -7,7 +7,7 @@ use std::task::{Context, Poll};
 use chromiumoxide_cdp::cdp::browser_protocol;
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
 	self, BackendNodeId, DescribeNodeParams, GetBoxModelParams, GetContentQuadsParams, Node,
-	NodeId, ResolveNodeParams, ScrollIntoViewIfNeededParams,
+	NodeId, RemoveNodeReturns, ResolveNodeParams, ScrollIntoViewIfNeededParams,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::Viewport;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
@@ -78,6 +78,11 @@ impl Element {
 		.await
 		.into_iter()
 		.collect::<Result<Vec<_>, _>>()
+	}
+
+	/// Remove Element from document
+	pub async fn remove(&self) -> Result<RemoveNodeReturns> {
+		Ok(self.tab.remove(self.node_id).await?)
 	}
 
 	/// Return first Element in the document that match the given selector

@@ -504,6 +504,11 @@ impl Page {
 		}
 	}
 
+	/// Remove Element from document
+	pub async fn remove(&self, node_id: NodeId) -> Result<RemoveNodeReturns> {
+		Ok(self.inner.remove(node_id).await?)
+	}
+
 	/// Describes node given its id
 	pub async fn describe_node(&self, node_id: NodeId) -> Result<Node> {
 		let resp = self
