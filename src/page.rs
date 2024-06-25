@@ -595,6 +595,35 @@ impl Page {
 		Ok(self)
 	}
 
+	/// Press key
+	pub async fn keys_down(&self, keys: Vec<impl AsRef<str>>) -> Result<&Self> {
+		self.inner.keys_down(keys).await?;
+
+		Ok(self)
+	}
+
+	/// Press key
+	pub async fn keys_up(&self, keys: Vec<impl AsRef<str>>) -> Result<&Self> {
+		self.inner.keys_up(keys).await?;
+
+		Ok(self)
+	}
+
+	// INsert text
+	pub async fn type_str(&self, text: impl AsRef<str>) -> Result<&Self> {
+		self.inner.type_str(text).await?;
+
+		Ok(self)
+	}
+
+	/// Press key
+	pub async fn press_keys(&self, keys: Vec<impl AsRef<str>>) -> Result<&Self> {
+		// self.inner.keys_down(keys.to_vec()).await?;
+		// self.inner.keys_up(keys).await?;
+
+		Ok(self)
+	}
+
 	// Scroll/move viewport by adding Point to current position
 	pub async fn scroll_relative(&self, point: Point) -> Result<&Self> {
 		let visual_viewport = self.layout_metrics().await?.css_visual_viewport;
@@ -640,8 +669,6 @@ impl Page {
 		&self,
 		screenshot_params: impl Into<ScreenshotParams>,
 	) -> Result<Vec<u8>> {
-		self.activate().await?;
-
 		let screenshot_params: ScreenshotParams = screenshot_params.into();
 
 		let mut viewport = screenshot_params.viewport();

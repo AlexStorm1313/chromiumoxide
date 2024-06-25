@@ -6,8 +6,9 @@ use std::task::{Context, Poll};
 
 use chromiumoxide_cdp::cdp::browser_protocol;
 use chromiumoxide_cdp::cdp::browser_protocol::dom::{
-	self, BackendNodeId, DescribeNodeParams, GetBoxModelParams, GetContentQuadsParams, Node,
-	NodeId, RemoveNodeReturns, ResolveNodeParams, ScrollIntoViewIfNeededParams,
+	self, BackendNodeId, DescribeNodeParams, FocusParams, FocusParamsBuilder, GetBoxModelParams,
+	GetContentQuadsParams, Node, NodeId, RemoveNodeReturns, ResolveNodeParams,
+	ScrollIntoViewIfNeededParams,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::Viewport;
 use chromiumoxide_cdp::cdp::js_protocol::runtime::{
@@ -15,6 +16,7 @@ use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 	RemoteObjectType,
 };
 use futures::{future, Future, FutureExt, Stream};
+use tracing::debug;
 
 use crate::error::{CdpError, Result};
 use crate::handler::PageInner;
@@ -213,12 +215,13 @@ impl Element {
 
 	/// Focus element using Devtools native functions
 	pub async fn focus(&self) -> Result<&Self> {
+		self.scroll_into_view().await?;
 		self.tab
-			.execute(browser_protocol::dom::FocusParams {
-				node_id: Some(self.node_id),
-				backend_node_id: Some(self.backend_node_id),
-				object_id: Some(self.remote_object_id.clone()),
-			})
+			.execute(
+				FocusParams::builder()
+					.backend_node_id(self.backend_node_id)
+					.build(),
+			)
 			.await?;
 
 		Ok(&self)
@@ -532,8 +535,6 @@ impl Element {
 		&self,
 		screenshot_params: impl Into<page::ScreenshotParams>,
 	) -> Result<Vec<u8>> {
-		self.tab.activate().await?;
-
 		let screenshot_params: page::ScreenshotParams = screenshot_params.into();
 
 		let mut viewport: Viewport = self.bounding_box().await?.into();

@@ -13,8 +13,8 @@ use chromiumoxide_cdp::cdp::browser_protocol::emulation::{
 	SetDeviceMetricsOverrideParams, SetDeviceMetricsOverrideReturns,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::input::{
-	DispatchKeyEventParams, DispatchKeyEventType, DispatchMouseEventParams, DispatchMouseEventType,
-	MouseButton,
+	DispatchKeyEventParams, DispatchKeyEventParamsBuilder, DispatchKeyEventType,
+	DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
 };
 use chromiumoxide_cdp::cdp::browser_protocol::page::{
 	CaptureScreenshotParams, FrameId, GetFrameTreeParams, GetFrameTreeReturns,
@@ -29,8 +29,10 @@ use chromiumoxide_cdp::cdp::js_protocol::runtime::{
 use chromiumoxide_types::{Command, CommandResponse};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use futures::channel::oneshot::channel as oneshot_channel;
+use futures::future::{join_all, try_join_all};
 use futures::stream::Fuse;
-use futures::{SinkExt, StreamExt};
+use futures::{FutureExt, SinkExt, StreamExt};
+use tracing::debug;
 
 use crate::cmd::{to_command_response, CommandMessage};
 use crate::error::{CdpError, Result};
@@ -40,6 +42,7 @@ use crate::handler::httpfuture::HttpFuture;
 use crate::handler::target::{GetExecutionContext, TargetMessage};
 use crate::handler::target_message_future::TargetMessageFuture;
 use crate::js::EvaluationResult;
+use crate::keys::{KeyDefinition, KeyDefinitions};
 use crate::layout::Point;
 use crate::{keys, utils, ArcHttpRequest};
 
@@ -258,37 +261,56 @@ impl PageInner {
 		Ok(self)
 	}
 
+	pub async fn keys_down(&self, keys: Vec<impl AsRef<str>>) -> Result<&Self> {
+		let key_defenitions = KeyDefinitions(
+			keys.iter()
+				.map(|key| keys::get_key_definition(key).unwrap())
+				.collect::<Vec<KeyDefinition>>(),
+		);
+		let events = Into::<Vec<DispatchKeyEventParamsBuilder>>::into(key_defenitions);
+		let fut = events
+			.into_iter()
+			.map(|disp| self.execute(disp.build().unwrap()));
+
+		try_join_all(fut).await?;
+
+		Ok(self)
+	}
+
+	pub async fn keys_up(&self, keys: Vec<impl AsRef<str>>) -> Result<&Self> {
+		let key_defenitions = KeyDefinitions(
+			keys.iter()
+				.map(|key| keys::get_key_definition(key).unwrap())
+				.collect::<Vec<KeyDefinition>>(),
+		);
+		let events = Into::<Vec<DispatchKeyEventParamsBuilder>>::into(key_defenitions);
+		let fut = events
+			.into_iter()
+			.map(|disp| self.execute(disp.r#type(DispatchKeyEventType::KeyUp).build().unwrap()));
+
+		try_join_all(fut).await?;
+
+		Ok(self)
+	}
+
 	/// Uses the `DispatchKeyEvent` mechanism to simulate pressing keyboard
 	/// keys.
 	pub async fn press_key(&self, key: impl AsRef<str>) -> Result<&Self> {
-		let key = key.as_ref();
-		let key_definition = keys::get_key_definition(key)
-			.ok_or_else(|| CdpError::msg(format!("Key not found: {key}")))?;
-		let mut cmd = DispatchKeyEventParams::builder();
+		self.execute(
+			Into::<DispatchKeyEventParamsBuilder>::into(keys::get_key_definition(key.as_ref())?)
+				.build()
+				.unwrap(),
+		)
+		.await?;
 
-		// See https://github.com/GoogleChrome/puppeteer/blob/62da2366c65b335751896afbb0206f23c61436f1/lib/Input.js#L114-L115
-		// And https://github.com/GoogleChrome/puppeteer/blob/62da2366c65b335751896afbb0206f23c61436f1/lib/Input.js#L52
-		let key_down_event_type = if let Some(txt) = key_definition.text {
-			cmd = cmd.text(txt);
-			DispatchKeyEventType::KeyDown
-		} else if key_definition.key.len() == 1 {
-			cmd = cmd.text(key_definition.key);
-			DispatchKeyEventType::KeyDown
-		} else {
-			DispatchKeyEventType::RawKeyDown
-		};
+		self.execute(
+			Into::<DispatchKeyEventParamsBuilder>::into(keys::get_key_definition(key.as_ref())?)
+				.r#type(DispatchKeyEventType::KeyUp)
+				.build()
+				.unwrap(),
+		)
+		.await?;
 
-		cmd = cmd
-			.r#type(DispatchKeyEventType::KeyDown)
-			.key(key_definition.key)
-			.code(key_definition.code)
-			.windows_virtual_key_code(key_definition.key_code)
-			.native_virtual_key_code(key_definition.key_code);
-
-		self.execute(cmd.clone().r#type(key_down_event_type).build().unwrap())
-			.await?;
-		self.execute(cmd.r#type(DispatchKeyEventType::KeyUp).build().unwrap())
-			.await?;
 		Ok(self)
 	}
 
