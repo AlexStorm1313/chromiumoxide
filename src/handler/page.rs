@@ -442,7 +442,14 @@ impl PageInner {
 	/// # Note: This does not return the actual HTML document of the page. To
 	/// retrieve the HTML content of the page see `Page::content`.
 	pub async fn get_document(&self) -> Result<GetDocumentReturns> {
-		Ok(self.execute(GetDocumentParams::default()).await?.result)
+		// Ok(self.execute(GetDocumentParams::default()).await?.result)
+		Ok(self
+			.execute(GetDocumentParams {
+				depth: Some(-1),
+				pierce: Some(true),
+			})
+			.await?
+			.result)
 	}
 
 	/// Screenshot function for CaptureScreenshot command

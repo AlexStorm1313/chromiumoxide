@@ -41,7 +41,7 @@ impl Element {
 			.execute(
 				DescribeNodeParams::builder()
 					.node_id(node_id)
-					.depth(100)
+					.depth(-1)
 					.build(),
 			)
 			.await?
@@ -350,8 +350,9 @@ impl Element {
 			.tab
 			.execute(
 				DescribeNodeParams::builder()
+					// .node_id(self.node_id)
 					.backend_node_id(self.backend_node_id)
-					.depth(100)
+					.depth(-1)
 					.build(),
 			)
 			.await?
@@ -423,6 +424,13 @@ impl Element {
 	}
 
 	pub async fn children(&self) -> Result<Vec<Element>> {
+		self.tab
+			.execute(dom::RequestChildNodesParams {
+				node_id: self.node_id,
+				depth: Some(-1),
+				pierce: Some(true),
+			})
+			.await?;
 		Ok(Element::from_nodes(
 			&self.tab,
 			&self
