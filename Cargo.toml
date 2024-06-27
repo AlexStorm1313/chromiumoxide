@@ -58,7 +58,7 @@ tracing-subscriber = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "time", "macros"] }
 
 [features]
-default = ["async-std-runtime", "bytes"]
+default = ["tokio-runtime", "bytes"]
 async-std-runtime = ["async-std", "async-tungstenite/async-std-runtime"]
 tokio-runtime = ["tokio", "async-tungstenite/tokio-runtime"]
 fetcher = []
@@ -77,26 +77,26 @@ _fetcher-native-async-std = [
 ]
 _fetcher-native-tokio = ["fetcher", "chromiumoxide_fetcher/_native-tokio"]
 
-[[example]]
-name = "wiki-tokio"
-required-features = ["tokio-runtime"]
+# [[example]]
+# name = "wiki-tokio"
+# required-features = ["tokio-runtime"]
 
-[[example]]
-name = "iframe-workaround"
-required-features = ["tokio-runtime", "tokio"]
+# [[example]]
+# name = "iframe-workaround"
+# required-features = ["tokio-runtime", "tokio"]
 
 
-[[example]]
-name = "httpfuture"
-required-features = ["tokio-runtime"]
+# [[example]]
+# name = "httpfuture"
+# required-features = ["tokio-runtime"]
 
-[[example]]
-name = "fetcher"
-required-features = ["_fetcher-native-async-std"]
+# [[example]]
+# name = "fetcher"
+# required-features = ["_fetcher-native-async-std"]
 
-[[example]]
-name = "fetcher-tokio"
-required-features = ["tokio-runtime", "_fetcher-native-tokio"]
+# [[example]]
+# name = "fetcher-tokio"
+# required-features = ["tokio-runtime", "_fetcher-native-tokio"]
 
 [workspace]
 members = [

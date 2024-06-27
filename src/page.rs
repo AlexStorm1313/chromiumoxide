@@ -26,11 +26,31 @@ use futures::channel::mpsc::unbounded;
 use futures::channel::oneshot::channel as oneshot_channel;
 use futures::{stream, SinkExt, StreamExt};
 use serde_json::json;
-use tokio::select;
-use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
+// use tokio::select;
+// use tokio::sync::RwLock;
+// use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
+
+cfg_if::cfg_if! {
+	if #[cfg(feature = "async-std-runtime")] {
+		use async_std::future::timeout;
+		use std::time::Duration;
+		use async_std::task::spawn;
+		use async_std::task::JoinHandle;
+		use futures::select;
+		use async_std::sync::RwLock;
+	} else if #[cfg(feature = "tokio-runtime")] {
+		use tokio::time::timeout;
+		use tokio::time::Duration;
+		use tokio::spawn;
+		use tokio::select;
+		use tokio::sync::RwLock;
+		use tokio::task::JoinHandle;
+	} else {
+		panic!("missing chromiumoxide runtime: enable `async-std-runtime` or `tokio-runtime`")
+	}
+}
 
 use crate::element::Element;
 use crate::error::{CdpError, Result};
@@ -50,6 +70,59 @@ pub struct Page {
 }
 
 impl Page {
+	cfg_if::cfg_if! {
+		 if #[cfg(feature = "tokio-runtime")] {
+			pub async fn screencast(
+				&self,
+				params: impl Into<StartScreencastParams>,
+			) -> Result<
+				(
+					JoinHandle<Result<Vec<EventScreencastFrame>, CdpError>>,
+					CancellationToken,
+				),
+				CdpError,
+			> {
+				let page_inner = self.inner.clone();
+				let page_inner_cloned = page_inner.clone();
+
+				let cancel_token = CancellationToken::new();
+				let cancel_token_cloned = cancel_token.clone();
+
+				let mut event_stream = self.event_listener::<EventScreencastFrame>().await?;
+				let event_handle = spawn(async move {
+					let event_screencast_frames = Arc::new(RwLock::new(vec![]));
+					let event_screencast_frames_cloned = event_screencast_frames.clone();
+
+					// I want this simpler, but there is no event for stopping screencast shit
+					Ok(select! {
+						_ = cancel_token_cloned.cancelled() => {
+							let _ = page_inner.stop_screencast(StopScreencastParams::default()).await;
+
+							event_screencast_frames_cloned.read().await.to_vec()
+						}
+						_ = tokio::spawn(async move {
+							while let Some(event_screencast_frame) = event_stream.next().await {
+								let _ = page_inner_cloned.screencast_frame_ack(ScreencastFrameAckParams {
+									session_id: event_screencast_frame.session_id,
+								}).await;
+
+								event_screencast_frames.write().await.push(event_screencast_frame.as_ref().clone()); // Not sure
+							};
+						}) => {
+							let _ = page_inner.stop_screencast(StopScreencastParams::default()).await;
+
+							event_screencast_frames_cloned.read().await.to_vec()
+						}
+					})
+				});
+
+				self.inner.start_screencast(params.into()).await?;
+
+				Ok((event_handle, cancel_token))
+			}
+		}
+	}
+
 	/// Removes the `navigator.webdriver` property
 	/// changes permissions, pluggins rendering contexts and the `window.chrome`
 	/// property to make it harder to detect the scraper as a bot
@@ -487,9 +560,9 @@ impl Page {
 		let selector = selector.into();
 		let page = self.clone();
 
-		match tokio::time::timeout(
-			tokio::time::Duration::from_millis(duration),
-			tokio::spawn(async move {
+		match timeout(
+			Duration::from_millis(duration),
+			spawn(async move {
 				loop {
 					if let Ok(element) = page.search_element(&selector).await {
 						break (element);
@@ -550,7 +623,7 @@ impl Page {
 	/// # use chromiumoxide::error::Result;
 	/// # use chromiumoxide::layout::Point;
 	/// # async fn demo(page: Page, point: Point) -> Result<()> {
-	///     let html = page.click(point).await?.wait_for_navigation().await?.content();
+	///     let html = page.click(point).await?.wait_for_navigation().await?.get_content();
 	///     # Ok(())
 	/// # }
 	/// ```
@@ -762,55 +835,6 @@ impl Page {
 		let img = self.screenshot(params).await?;
 		utils::write(output.as_ref(), &img).await?;
 		Ok(img)
-	}
-
-	pub async fn screencast(
-		&self,
-		params: impl Into<StartScreencastParams>,
-	) -> Result<
-		(
-			JoinHandle<Result<Vec<EventScreencastFrame>, CdpError>>,
-			CancellationToken,
-		),
-		CdpError,
-	> {
-		let page_inner = self.inner.clone();
-		let page_inner_cloned = page_inner.clone();
-
-		let cancel_token = CancellationToken::new();
-		let cancel_token_cloned = cancel_token.clone();
-
-		let mut event_stream = self.event_listener::<EventScreencastFrame>().await?;
-		let event_handle = tokio::spawn(async move {
-			let event_screencast_frames = Arc::new(RwLock::new(vec![]));
-			let event_screencast_frames_cloned = event_screencast_frames.clone();
-
-			// I want this simpler, but there is no event for stopping screencast shit
-			Ok(select! {
-				_ = cancel_token_cloned.cancelled() => {
-					let _ = page_inner.stop_screencast(StopScreencastParams::default()).await;
-
-					event_screencast_frames_cloned.read().await.to_vec()
-				}
-				_ = tokio::spawn(async move {
-					while let Some(event_screencast_frame) = event_stream.next().await {
-						let _ = page_inner_cloned.screencast_frame_ack(ScreencastFrameAckParams {
-							session_id: event_screencast_frame.session_id,
-						}).await;
-
-						event_screencast_frames.write().await.push(event_screencast_frame.as_ref().clone()); // Not sure
-					};
-				}) => {
-					let _ = page_inner.stop_screencast(StopScreencastParams::default()).await;
-
-					event_screencast_frames_cloned.read().await.to_vec()
-				}
-			})
-		});
-
-		self.inner.start_screencast(params.into()).await?;
-
-		Ok((event_handle, cancel_token))
 	}
 
 	/// Print the current page as pdf.

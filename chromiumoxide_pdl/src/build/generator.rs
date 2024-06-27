@@ -199,8 +199,10 @@ impl Generator {
 
 		for (idx, pdl) in protocols.iter().enumerate() {
 			let types = self.generate_types(&pdl.domains);
+
 			let version = format!("{}.{}", pdl.version.major, pdl.version.minor);
 			let module_name = format_ident!("{}", self.protocol_mods[idx]);
+
 			let module = quote! {
 				#[allow(clippy::wrong_self_convention)]
 				pub mod #module_name{
@@ -209,7 +211,6 @@ impl Generator {
 					#types
 				}
 			};
-
 			modules.extend(module);
 		}
 
@@ -739,6 +740,7 @@ impl Generator {
 			.to_upper_camel_case();
 
 		let name = format_ident!("{}", enum_name);
+		// println!("cargo:warning={}", format!("{:?}", name));
 
 		self.type_size.insert(enum_name, 16);
 
@@ -768,7 +770,13 @@ impl Generator {
 		// from str to string impl
 		let vars: Vec<_> = variants
 			.iter()
-			.map(|s| format_ident!("{}", s.name.to_upper_camel_case()))
+			.map(|s| {
+				if s.name.as_ref() == "Self" {
+					format_ident!("{}", "_Self")
+				} else {
+					format_ident!("{}", s.name.to_upper_camel_case())
+				}
+			})
 			.collect();
 
 		let str_values: Vec<_> = variants
@@ -1003,6 +1011,7 @@ pub(crate) fn generate_field_name(name: &str) -> String {
 		"type" => "r#type".to_string(),
 		"mod" => "r#mod".to_string(),
 		"override" => "r#override".to_string(),
+		"Self" => "_Self".to_string(),
 		_ => name,
 	}
 }
@@ -1014,6 +1023,7 @@ pub(crate) fn generate_type_name(name: &str) -> String {
 		"type" => "r#type".to_string(),
 		"mod" => "r#mod".to_string(),
 		"override" => "r#override".to_string(),
+		"Self" => "_Self".to_string(),
 		_ => name,
 	}
 }
@@ -1147,7 +1157,12 @@ impl SerdeSupport {
 	}
 
 	fn generate_variant(&self, var: &Variant) -> TokenStream {
-		let v = format_ident!("{}", var.name.to_upper_camel_case());
+		let mut v = format_ident!("{}", var.name.to_upper_camel_case());
+
+		if var.name == "Self" {
+			v = format_ident!("{}", format!("{}", "_Self"));
+		}
+
 		let rename = self.generate_rename(var.name.as_ref());
 		if let Some(desc) = var.description.as_ref() {
 			quote! {

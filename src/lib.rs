@@ -3,43 +3,6 @@
 //! This crate uses the [Chrome DevTools protocol] to drive/launch a Chromium or
 //! Chrome (potentially headless) browser.
 //!
-//! # Example
-//! ```no_run
-//! use futures::StreamExt;
-//! use chromiumoxide::{Browser, BrowserConfig};
-//!
-//! #[async_std::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!
-//!     let (browser, mut handler) =
-//!         Browser::launch(BrowserConfig::builder().with_head().build()?).await?;
-//!
-//!     let handle = async_std::task::spawn(async move {
-//!         loop {
-//!             let _event = handler.next().await.unwrap();
-//!         }
-//!     });
-//!
-//!     let page = browser.new_page("https://en.wikipedia.org").await?;
-//!
-//!     // type into the search field and hit `Enter`,
-//!     // this triggers a navigation to the search result page
-//!     page.find_element("input#searchInput")
-//!             .await?
-//!             .click()
-//!             .await?
-//!             .type_str("Rust programming language")
-//!             .await?
-//!             .press_key("Enter")
-//!             .await?;
-//!
-//!     let html = page.wait_for_navigation().await?.content().await?;
-//!
-//!     handle.await;
-//!     Ok(())
-//! }
-//! ```
-//!
 //! The [`chromiumoxide_pdl`] crate contains a [PDL
 //! parser](chromiumoxide_pdl/src/pdl/parser.rs), which is a rust rewrite of a
 //! [python script in the chromium source tree]( https://chromium.googlesource.com/deps/inspector_protocol/+/refs/heads/master/pdl.py) and a

@@ -315,7 +315,7 @@ impl Element {
 	/// # use chromiumoxide::page::Page;
 	/// # use chromiumoxide::error::Result;
 	/// # async fn demo(page: Page) -> Result<()> {
-	///     let element = page.find_element("input#searchInput").await?;
+	///     let element = page.search_element(&"input#searchInput".to_string()).await?;
 	///     element.click().await?.type_str("this goes into the input field").await?;
 	///     # Ok(())
 	/// # }
@@ -333,7 +333,7 @@ impl Element {
 	/// # use chromiumoxide::page::Page;
 	/// # use chromiumoxide::error::Result;
 	/// # async fn demo(page: Page) -> Result<()> {
-	///     let element = page.find_element("input#searchInput").await?;
+	///     let element = page.search_element(&"input#searchInput".to_string()).await?;
 	///     element.click().await?.type_str("this goes into the input field").await?
 	///          .press_key("Enter").await?;
 	///     # Ok(())
