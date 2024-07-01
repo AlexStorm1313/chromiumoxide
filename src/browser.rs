@@ -169,15 +169,9 @@ impl Browser {
 			child: &mut Child,
 		) -> Result<(String, Connection<CdpEventMessage>)> {
 			let dur = config.launch_timeout;
-			cfg_if::cfg_if! {
-				if #[cfg(feature = "async-std-runtime")] {
-					let timeout_fut = Box::pin(async_std::task::sleep(dur));
-				} else if #[cfg(feature = "tokio-runtime")] {
-					let timeout_fut = Box::pin(tokio::time::sleep(dur));
-				} else {
-					panic!("missing chromiumoxide runtime: enable `async-std-runtime` or `tokio-runtime`")
-				}
-			};
+
+			let timeout_fut = Box::pin(tokio::time::sleep(dur));
+
 			// extract the ws:
 			let debug_ws_url = ws_url_from_output(child, timeout_fut).await?;
 			let conn = Connection::<CdpEventMessage>::connect(&debug_ws_url).await?;

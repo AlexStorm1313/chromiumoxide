@@ -5,9 +5,11 @@ pub mod parser;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "serde0")]
-mod ser;
+mod serialize;
 
 use std::borrow::Cow;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[cfg_attr(feature = "serde0", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -269,4 +271,35 @@ impl<'a, T: DataType> From<&'a T> for Variant<'a> {
 			name: Cow::Borrowed(dt.name()),
 		}
 	}
+}
+
+pub fn download(commit: &str) -> [PathBuf; 2] {
+	fs::create_dir_all("pdl");
+
+	let dir = Path::new("pdl");
+	let js_protocol_path = dir.join("js_protocol.pdl");
+	let browser_protocol_path = dir.join("browser_protocol.pdl");
+
+	// Write js_protocol.pdl
+	fs::write(
+		&js_protocol_path,
+		ureq::get(&format!(
+		"https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/{}/pdl/js_protocol.pdl",
+		commit
+	))
+		.call()
+		.unwrap()
+		.into_string()
+		.unwrap(),
+	)
+	.unwrap();
+
+	// Write browser_protocol.pdl
+	fs::write(&browser_protocol_path, ureq::get(&format!("https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/{}/pdl/browser_protocol.pdl", commit))
+	.call()
+	.unwrap()
+	.into_string()
+	.unwrap()).unwrap();
+
+	[js_protocol_path, browser_protocol_path]
 }

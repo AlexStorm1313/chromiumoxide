@@ -26,31 +26,15 @@ use futures::channel::mpsc::unbounded;
 use futures::channel::oneshot::channel as oneshot_channel;
 use futures::{stream, SinkExt, StreamExt};
 use serde_json::json;
+use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
+use tokio::time::{timeout, Duration};
+use tokio::{select, spawn};
 // use tokio::select;
 // use tokio::sync::RwLock;
 // use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
-
-cfg_if::cfg_if! {
-	if #[cfg(feature = "async-std-runtime")] {
-		use async_std::future::timeout;
-		use std::time::Duration;
-		use async_std::task::spawn;
-		use async_std::task::JoinHandle;
-		use futures::select;
-		use async_std::sync::RwLock;
-	} else if #[cfg(feature = "tokio-runtime")] {
-		use tokio::time::timeout;
-		use tokio::time::Duration;
-		use tokio::spawn;
-		use tokio::select;
-		use tokio::sync::RwLock;
-		use tokio::task::JoinHandle;
-	} else {
-		panic!("missing chromiumoxide runtime: enable `async-std-runtime` or `tokio-runtime`")
-	}
-}
 
 use crate::element::Element;
 use crate::error::{CdpError, Result};
@@ -70,189 +54,53 @@ pub struct Page {
 }
 
 impl Page {
-	cfg_if::cfg_if! {
-		 if #[cfg(feature = "tokio-runtime")] {
-			pub async fn screencast(
-				&self,
-				params: impl Into<StartScreencastParams>,
-			) -> Result<
-				(
-					JoinHandle<Result<Vec<EventScreencastFrame>, CdpError>>,
-					CancellationToken,
-				),
-				CdpError,
-			> {
-				let page_inner = self.inner.clone();
-				let page_inner_cloned = page_inner.clone();
+	pub async fn screencast(
+		&self,
+		params: impl Into<StartScreencastParams>,
+	) -> Result<
+		(
+			JoinHandle<Result<Vec<EventScreencastFrame>, CdpError>>,
+			CancellationToken,
+		),
+		CdpError,
+	> {
+		let page_inner = self.inner.clone();
+		let page_inner_cloned = page_inner.clone();
 
-				let cancel_token = CancellationToken::new();
-				let cancel_token_cloned = cancel_token.clone();
+		let cancel_token = CancellationToken::new();
+		let cancel_token_cloned = cancel_token.clone();
 
-				let mut event_stream = self.event_listener::<EventScreencastFrame>().await?;
-				let event_handle = spawn(async move {
-					let event_screencast_frames = Arc::new(RwLock::new(vec![]));
-					let event_screencast_frames_cloned = event_screencast_frames.clone();
+		let mut event_stream = self.event_listener::<EventScreencastFrame>().await?;
+		let event_handle = spawn(async move {
+			let event_screencast_frames = Arc::new(RwLock::new(vec![]));
+			let event_screencast_frames_cloned = event_screencast_frames.clone();
 
-					// I want this simpler, but there is no event for stopping screencast shit
-					Ok(select! {
-						_ = cancel_token_cloned.cancelled() => {
-							let _ = page_inner.stop_screencast(StopScreencastParams::default()).await;
+			// I want this simpler, but there is no event for stopping screencast shit
+			Ok(select! {
+				_ = cancel_token_cloned.cancelled() => {
+					let _ = page_inner.stop_screencast(StopScreencastParams::default()).await;
 
-							event_screencast_frames_cloned.read().await.to_vec()
-						}
-						_ = tokio::spawn(async move {
-							while let Some(event_screencast_frame) = event_stream.next().await {
-								let _ = page_inner_cloned.screencast_frame_ack(ScreencastFrameAckParams {
-									session_id: event_screencast_frame.session_id,
-								}).await;
+					event_screencast_frames_cloned.read().await.to_vec()
+				}
+				_ = tokio::spawn(async move {
+					while let Some(event_screencast_frame) = event_stream.next().await {
+						let _ = page_inner_cloned.screencast_frame_ack(ScreencastFrameAckParams {
+							session_id: event_screencast_frame.session_id,
+						}).await;
 
-								event_screencast_frames.write().await.push(event_screencast_frame.as_ref().clone()); // Not sure
-							};
-						}) => {
-							let _ = page_inner.stop_screencast(StopScreencastParams::default()).await;
+						event_screencast_frames.write().await.push(event_screencast_frame.as_ref().clone()); // Not sure
+					};
+				}) => {
+					let _ = page_inner.stop_screencast(StopScreencastParams::default()).await;
 
-							event_screencast_frames_cloned.read().await.to_vec()
-						}
-					})
-				});
+					event_screencast_frames_cloned.read().await.to_vec()
+				}
+			})
+		});
 
-				self.inner.start_screencast(params.into()).await?;
+		self.inner.start_screencast(params.into()).await?;
 
-				Ok((event_handle, cancel_token))
-			}
-		}
-	}
-
-	/// Removes the `navigator.webdriver` property
-	/// changes permissions, pluggins rendering contexts and the `window.chrome`
-	/// property to make it harder to detect the scraper as a bot
-	async fn _enable_stealth_mode(&self) -> Result<()> {
-		self.hide_webdriver().await?;
-		self.hide_permissions().await?;
-		self.hide_plugins().await?;
-		self.hide_webgl_vendor().await?;
-		self.hide_chrome().await?;
-
-		Ok(())
-	}
-
-	/// Changes your user_agent, removes the `navigator.webdriver` property
-	/// changes permissions, pluggins rendering contexts and the `window.chrome`
-	/// property to make it harder to detect the scraper as a bot
-	pub async fn enable_stealth_mode(&self) -> Result<()> {
-		self._enable_stealth_mode().await?;
-		self.set_user_agent("Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.5296.0 Safari/537.36").await?;
-
-		Ok(())
-	}
-
-	/// Changes your user_agent with a custom agent, removes the `navigator.webdriver` property
-	/// changes permissions, pluggins rendering contexts and the `window.chrome`
-	/// property to make it harder to detect the scraper as a bot
-	pub async fn enable_stealth_mode_with_agent(&self, ua: &str) -> Result<()> {
-		self._enable_stealth_mode().await?;
-		if !ua.is_empty() {
-			self.set_user_agent(ua).await?;
-		}
-		Ok(())
-	}
-
-	/// Sets `window.chrome` on frame creation
-	async fn hide_chrome(&self) -> Result<(), CdpError> {
-		self.execute(AddScriptToEvaluateOnNewDocumentParams {
-			source: "window.chrome = { runtime: {} };".to_string(),
-			world_name: None,
-			include_command_line_api: None,
-		})
-		.await?;
-		Ok(())
-	}
-
-	/// Obfuscates WebGL vendor on frame creation
-	async fn hide_webgl_vendor(&self) -> Result<(), CdpError> {
-		self
-            .execute(AddScriptToEvaluateOnNewDocumentParams {
-                source: "
-                    const getParameter = WebGLRenderingContext.getParameter;
-                    WebGLRenderingContext.prototype.getParameter = function (parameter) {
-                        if (parameter === 37445) {
-                            return 'Google Inc. (NVIDIA)';
-                        }
-    
-                        if (parameter === 37446) {
-                            return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.5671)';
-                        }
-    
-                        return getParameter(parameter);
-                    };
-                "
-                .to_string(),
-                world_name: None,
-                include_command_line_api: None,
-            })
-            .await?;
-		Ok(())
-	}
-
-	/// Obfuscates browser plugins on frame creation
-	async fn hide_plugins(&self) -> Result<(), CdpError> {
-		self.execute(AddScriptToEvaluateOnNewDocumentParams {
-			source: "
-                    Object.defineProperty(
-                        navigator,
-                        'plugins',
-                        {
-                            get: () => [
-                                { filename: 'internal-pdf-viewer' },
-                                { filename: 'adsfkjlkjhalkh' },
-                                { filename: 'internal-nacl-plugin '}
-                            ],
-                        }
-                    );
-                "
-			.to_string(),
-			world_name: None,
-			include_command_line_api: None,
-		})
-		.await?;
-		Ok(())
-	}
-
-	/// Obfuscates browser permissions on frame creation
-	async fn hide_permissions(&self) -> Result<(), CdpError> {
-		self.execute(AddScriptToEvaluateOnNewDocumentParams {
-			source: "
-                    const originalQuery = window.navigator.permissions.query;
-                    window.navigator.permissions.__proto__.query = parameters => {
-                        return parameters.name === 'notifications'
-                            ? Promise.resolve({ state: Notification.permission })
-                            : originalQuery(parameters);
-                    }
-                "
-			.to_string(),
-			world_name: None,
-			include_command_line_api: None,
-		})
-		.await?;
-		Ok(())
-	}
-
-	/// Removes the `navigator.webdriver` property on frame creation
-	async fn hide_webdriver(&self) -> Result<(), CdpError> {
-		self.execute(AddScriptToEvaluateOnNewDocumentParams {
-			source: "
-                    Object.defineProperty(
-                        navigator,
-                        'webdriver',
-                        { get: () => undefined }
-                    );
-                "
-			.to_string(),
-			world_name: None,
-			include_command_line_api: None,
-		})
-		.await?;
-		Ok(())
+		Ok((event_handle, cancel_token))
 	}
 
 	/// Execute a command and return the `Command::Response`
@@ -768,7 +616,7 @@ impl Page {
 		// Resize window to load all content on the page
 		if screenshot_params.full_page() {
 			capture_screenshot_params.capture_beyond_viewport = Some(true); // Just an extra setting for good measure
-																// capture_screenshot_params.optimize_for_speed = Some(true);
+																   // capture_screenshot_params.optimize_for_speed = Some(true);
 			viewport.width = metrics.css_content_size.width;
 			viewport.height = metrics.css_content_size.height;
 			device_metrics.width = metrics.css_content_size.width as i64;
@@ -1597,6 +1445,7 @@ impl Page {
 				end_column: 0,
 			},
 			rule_text: payload.to_string(),
+			node_for_property_syntax_validation: None,
 		})
 		.await?;
 

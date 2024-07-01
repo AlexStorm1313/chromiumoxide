@@ -14,41 +14,7 @@ use crate::build::builder::Builder;
 use crate::build::event::{EventBuilder, EventType};
 use crate::build::types::*;
 use crate::pdl::parser::parse_pdl;
-use crate::pdl::{DataType, Domain, Param, Protocol, Type, Variant};
-
-/// Compile `.pdl` files into Rust files during a Cargo build.
-///
-/// The generated `.rs` files are written to the Cargo `OUT_DIR` directory,
-/// suitable for use with
-///
-/// This function should be called in a project's `build.rs`.
-///
-/// # Arguments
-///
-/// **`pdls`** - Paths to `.pdl` files to compile.
-///
-/// # Errors
-///
-/// This function can fail for a number of reasons:
-///
-///   - Failure to locate `pdl` files.
-///   - Failure to parse the `.pdl`s.
-///
-/// It's expected that this function call be `unwrap`ed in a `build.rs`; there
-/// is typically no reason to gracefully recover from errors during a build.
-///
-/// # Example `build.rs`
-///
-/// ```rust,no_run
-/// # use std::io::Result;
-/// fn main() -> Result<()> {
-///   chromiumoxide_pdl::build::compile_pdls(&["src/js.pdl", "src/browser.pdl"])?;
-///   Ok(())
-/// }
-/// ```
-pub fn compile_pdls<P: AsRef<Path>>(pdls: &[P]) -> io::Result<()> {
-	Generator::default().compile_pdls(pdls)
-}
+use crate::pdl::{self, DataType, Domain, Param, Protocol, Type, Variant};
 
 /// Generates rust code for the Chrome DevTools Protocol
 #[derive(Debug, Clone)]
@@ -56,6 +22,7 @@ pub struct Generator {
 	serde_support: SerdeSupport,
 	with_experimental: bool,
 	with_deprecated: bool,
+	pdl_commit: String,
 	out_dir: Option<PathBuf>,
 	protocol_mods: Vec<String>,
 	domains: HashMap<String, usize>,
@@ -78,7 +45,8 @@ impl Default for Generator {
 			serde_support: Default::default(),
 			with_experimental: true,
 			with_deprecated: false,
-			out_dir: None,
+			pdl_commit: "a85be37c7a4ff1bd80357d27dcef78431a12639c".to_string(),
+			out_dir: Some(Path::new("src").to_path_buf()),
 			protocol_mods: Vec::new(),
 			domains: Default::default(),
 			target_mod: Default::default(),
@@ -126,6 +94,12 @@ impl Generator {
 		self
 	}
 
+	/// Set the pdl commit to use
+	pub fn pdl_commit(&mut self, pdl_commit: impl Into<String>) -> &mut Self {
+		self.pdl_commit = pdl_commit.into();
+		self
+	}
+
 	/// Configures the name of the module and file generated.
 	pub fn target_mod(&mut self, mod_name: impl Into<String>) -> &mut Self {
 		self.target_mod = Some(mod_name.into());
@@ -151,7 +125,7 @@ impl Generator {
 	///   Ok(())
 	/// }
 	/// ```
-	pub fn compile_pdls<P: AsRef<Path>>(&mut self, pdls: &[P]) -> io::Result<()> {
+	pub fn compile_pdls(&mut self) -> io::Result<()> {
 		let target: PathBuf = self.out_dir.clone().map(Ok).unwrap_or_else(|| {
 			std::env::var_os("OUT_DIR")
 				.ok_or_else(|| {
@@ -162,8 +136,8 @@ impl Generator {
 
 		let mut inputs = vec![];
 
-		for path in pdls {
-			let path = path.as_ref();
+		for path in pdl::download(&self.pdl_commit) {
+			let path = path.as_path();
 			let file_name = path.file_stem().ok_or_else(|| {
 				Error::new(
 					ErrorKind::Other,
@@ -180,7 +154,6 @@ impl Generator {
 
 		for (idx, input) in inputs.iter().enumerate() {
 			let pdl = parse_pdl(input).map_err(|e| Error::new(ErrorKind::Other, e.message))?;
-
 			self.domains
 				.extend(pdl.domains.iter().map(|d| (d.name.to_string(), idx)));
 
@@ -770,13 +743,7 @@ impl Generator {
 		// from str to string impl
 		let vars: Vec<_> = variants
 			.iter()
-			.map(|s| {
-				if s.name.as_ref() == "Self" {
-					format_ident!("{}", "_Self")
-				} else {
-					format_ident!("{}", s.name.to_upper_camel_case())
-				}
-			})
+			.map(|s| format_ident!("{}", generate_type_name(&s.name)))
 			.collect();
 
 		let str_values: Vec<_> = variants
@@ -1006,24 +973,20 @@ fn generate_enum_str_fns(name: &Ident, vars: &[Ident], str_vals: &[Vec<String>])
 
 /// Escapes reserved rust keywords
 pub(crate) fn generate_field_name(name: &str) -> String {
-	let name = name.to_snake_case();
-	match name.as_str() {
-		"type" => "r#type".to_string(),
-		"mod" => "r#mod".to_string(),
-		"override" => "r#override".to_string(),
-		"Self" => "_Self".to_string(),
-		_ => name,
-	}
+	escape_reserverd_keywords(name.to_snake_case().as_str()).to_string()
 }
 
 /// Escapes reserved rust keywords
 pub(crate) fn generate_type_name(name: &str) -> String {
-	let name = name.to_upper_camel_case();
-	match name.as_str() {
-		"type" => "r#type".to_string(),
-		"mod" => "r#mod".to_string(),
-		"override" => "r#override".to_string(),
-		"Self" => "_Self".to_string(),
+	escape_reserverd_keywords(name.to_upper_camel_case().as_str()).to_string()
+}
+
+pub(crate) fn escape_reserverd_keywords(name: &str) -> &str {
+	match name {
+		"type" => "r#type",
+		"mod" => "r#mod",
+		"override" => "r#override",
+		"Self" => "Zelf", // Dirty fix to prevent using reserved Self keyword, only affects internal usage
 		_ => name,
 	}
 }
@@ -1157,13 +1120,8 @@ impl SerdeSupport {
 	}
 
 	fn generate_variant(&self, var: &Variant) -> TokenStream {
-		let mut v = format_ident!("{}", var.name.to_upper_camel_case());
-
-		if var.name == "Self" {
-			v = format_ident!("{}", format!("{}", "_Self"));
-		}
-
-		let rename = self.generate_rename(var.name.as_ref());
+		let v = format_ident!("{}", generate_type_name(&var.name));
+		let rename = self.generate_rename(&var.name);
 		if let Some(desc) = var.description.as_ref() {
 			quote! {
 				#[doc = #desc]
@@ -1221,10 +1179,7 @@ mod tests {
 		Generator::default()
 			.out_dir(dir.join("src"))
 			.serde(SerdeSupport::with_feature("serde0"))
-			.compile_pdls(&[
-				dir.join("js_protocol.pdl"),
-				dir.join("browser_protocol.pdl"),
-			])
+			.compile_pdls()
 			.unwrap();
 	}
 }
